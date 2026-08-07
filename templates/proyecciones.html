@@ -375,6 +375,60 @@
     </div>
   </div>
 
+  <h2>Dólar blue real (elasticidad de la demanda internacional)</h2>
+  <div class="card">
+    <p class="note" style="margin:0 0 12px;">
+      Cargá la serie diaria del dólar blue (formato "category,valor", fecha en inglés) para
+      calcular su versión <b>real</b>: se promedia a mensual y se deflacta por el IPC —
+      <b>Nivel General</b>, cargado en la sección de Índice salarial de más abajo — con base
+      en el primer mes del propio archivo. Es decir, el valor real del primer mes coincide
+      con el nominal de ese mes; de ahí en más, sube o baja según cuánto corrió el dólar
+      blue por encima o por debajo de la inflación general.
+      Igual que con el ITCRM: sirve para estimar la elasticidad de la demanda internacional,
+      pero no reemplaza el ITCRM del BCRA de la sección de arriba — son dos series distintas
+      (el BCRA no calcula el blue), podés cargar y comparar ambas.
+    </p>
+    <div class="row" style="align-items:center;">
+      <div class="field">
+        <label for="fblue-file">Dólar blue diario (.csv)</label>
+        <input type="file" id="fblue-file" accept=".csv">
+      </div>
+      <div class="field">
+        <button class="primary" onclick="subirDolarBlue()">Subir</button>
+      </div>
+      <div class="field">
+        <button onclick="estimarElasticidadDolarBlue()" id="btn-elasticidad-blue"
+                title="Ajusta log(internacional) = a + b·tiempo + c·log(dólar blue real) + estacionalidad por mínimos cuadrados.">
+          Estimar elasticidad
+        </button>
+      </div>
+    </div>
+    <div class="err" id="fblue-msg"></div>
+    <div class="note" id="elasticidad-blue-msg" style="margin-top:8px;"></div>
+
+    <div class="row" style="align-items:center; gap:8px; margin-top:10px;">
+      <span class="note" style="margin:0;">Rango de meses:</span>
+      <select id="rango-blue-desde" onchange="aplicarRangoDolarBlue()" style="min-width:130px;"></select>
+      <span class="note" style="margin:0;">hasta</span>
+      <select id="rango-blue-hasta" onchange="aplicarRangoDolarBlue()" style="min-width:130px;"></select>
+      <button type="button" onclick="limpiarRangoDolarBlue()" style="padding:6px 12px; font-size:12.5px;">
+        Limpiar rango
+      </button>
+    </div>
+
+    <div id="chart-blue" style="margin-top:14px; min-height:280px;"></div>
+
+    <div style="max-height:480px; overflow-y:auto; margin-top:12px;">
+    <table>
+      <thead style="position:sticky; top:0; background:#10162e; z-index:1;">
+        <tr><th>Período</th><th class="num">Dólar blue real</th>
+            <th class="num">Variación mensual</th></tr>
+      </thead>
+      <tbody id="tbody-blue"><tr><td colspan="3" class="empty">Sin datos de dólar blue cargados.</td></tr></tbody>
+    </table>
+    </div>
+  </div>
+
   <h2>Índice salarial (elasticidad de la demanda de cabotaje)</h2>
   <div class="card">
     <p class="note" style="margin:0 0 12px;">
@@ -484,6 +538,7 @@ let MERCADO = [];      // volumen real del mercado por empresa (planilla propia)
 let FX = [];            // serie mensual de tipo de cambio (planilla propia)
 let SALARIOS = [];       // todas las sub-series del índice salarial (categoria='salario')
 let IPC = [];            // todas las divisiones del IPC (categoria='ipc'), para deflactar salarios
+let DOLARBLUE = [];       // dólar blue nominal mensual (categoria='dolar_blue', promedio de la serie diaria)
 let REALES = {};       // datos reales por período ("anio-mes"), incluidos meses aún proyectados
 let editandoId = null;
 let editandoExclusionId = null;
@@ -508,7 +563,7 @@ async function cargarSerie(aeropuerto) {
 
 async function cargarTodo() {
   try {
-    const [rc, rp, rx, rm, rfx, rsal, ripc] = await Promise.all([
+    const [rc, rp, rx, rm, rfx, rsal, ripc, rblue] = await Promise.all([
       fetch('/api/consumo_nacional'),
       fetch('/api/proyeccion/rutas?escenario=Base'),
       fetch('/api/proyeccion/exclusiones'),
@@ -516,6 +571,7 @@ async function cargarTodo() {
       fetch('/api/proyeccion/fx'),
       fetch('/api/proyeccion/indices?categoria=salario'),
       fetch('/api/proyeccion/indices?categoria=ipc'),
+      fetch('/api/proyeccion/indices?categoria=dolar_blue'),
     ]);
     const dc = await rc.json();
     const dp = await rp.json();
@@ -524,6 +580,7 @@ async function cargarTodo() {
     const dfx = await rfx.json();
     const dsal = await rsal.json();
     const dipc = await ripc.json();
+    const dblue = await rblue.json();
     if (dc.error) throw new Error(dc.error);
     if (dp.error) throw new Error(dp.error);
     if (dx.error) throw new Error(dx.error);
@@ -531,6 +588,7 @@ async function cargarTodo() {
     if (dfx.error) throw new Error(dfx.error);
     if (dsal.error) throw new Error(dsal.error);
     if (dipc.error) throw new Error(dipc.error);
+    if (dblue.error) throw new Error(dblue.error);
 
     SERIE = dc.serie || [];
     REALES = dc.reales_por_periodo || {};
@@ -543,6 +601,7 @@ async function cargarTodo() {
     FX = dfx.fx || [];
     SALARIOS = dsal.indices || [];
     IPC = dipc.indices || [];
+    DOLARBLUE = (dblue.indices || []).filter(i => i.nombre === 'nominal');
     ARGENTINOS = dp.argentinos || [];
 
     const selAero = document.getElementById('f-aeroplanta');
@@ -749,8 +808,10 @@ function recalcular() {
   dibujarTablaMercado(filas);
   dibujarTablaFX();
   dibujarTablaSalarios();
+  dibujarTablaDolarBlue();
   dibujarGraficoFX();
   dibujarGraficoSalarios();
+  dibujarGraficoDolarBlue();
 
   const warn = document.getElementById('covid-warn');
   if (!estCab.anios.length) {
@@ -2039,6 +2100,218 @@ function aplicarRangoFX() { aplicarRangoGenerico('rango-fx-desde', 'rango-fx-has
 function limpiarRangoFX() { limpiarRangoGenerico('rango-fx-desde', 'rango-fx-hasta', 'chart-fx'); }
 function aplicarRangoSalarios() { aplicarRangoGenerico('rango-sal-desde', 'rango-sal-hasta', 'chart-salarios'); }
 function limpiarRangoSalarios() { limpiarRangoGenerico('rango-sal-desde', 'rango-sal-hasta', 'chart-salarios'); }
+function aplicarRangoDolarBlue() { aplicarRangoGenerico('rango-blue-desde', 'rango-blue-hasta', 'chart-blue'); }
+function limpiarRangoDolarBlue() { limpiarRangoGenerico('rango-blue-desde', 'rango-blue-hasta', 'chart-blue'); }
+
+// ---------------------------------------------------------------- dólar blue real
+// dolar_blue(t) es nominal (se sube tal cual el CSV diario, promediado a mensual). Acá se
+// deflacta por el IPC Nivel General (categoria='ipc', nombre='Nivel General' — no el
+// selector de división de la sección de salarios, que es para otra cosa: acá interesa el
+// poder de compra general, no una canasta puntual) con base en el PRIMER mes del propio
+// archivo de dólar blue, no en el primer mes en que blue e IPC se superponen — si el IPC
+// no cubre ese primer mes, se cae al primer mes que sí lo cubre y se avisa en el gráfico,
+// pero la intención por defecto es "el primer dato que subiste".
+function calcularDolarBlueReal() {
+  if (!DOLARBLUE.length) return { serie: null, motivo: 'sin_blue' };
+  const nominal = [...DOLARBLUE].sort((a, b) => mesIndex(a.anio, a.mes) - mesIndex(b.anio, b.mes));
+
+  const ipcNivelGeneral = IPC.filter(i => i.nombre === 'Nivel General');
+  if (!ipcNivelGeneral.length) return { serie: null, motivo: 'sin_ipc' };
+  const ipcPorPeriodo = new Map(ipcNivelGeneral.map(i => [`${i.anio}-${i.mes}`, i.valor]));
+
+  // Base: el primer mes del CSV de blue que también tenga IPC. Casi siempre coincide con
+  // el primer mes del archivo; si no, se informa el corrimiento en vez de fallar en
+  // silencio.
+  let baseIdx = nominal.findIndex(s => ipcPorPeriodo.has(`${s.anio}-${s.mes}`));
+  if (baseIdx === -1) return { serie: null, motivo: 'sin_superposicion' };
+
+  const base = nominal[baseIdx];
+  const ipcBase = ipcPorPeriodo.get(`${base.anio}-${base.mes}`);
+
+  const serie = [];
+  for (const s of nominal) {
+    const ipc = ipcPorPeriodo.get(`${s.anio}-${s.mes}`);
+    if (ipc == null) continue;  // ese mes no tiene IPC: no se puede deflactar, se saltea
+    serie.push({ anio: s.anio, mes: s.mes, nominal: s.valor, valor: s.valor * (ipcBase / ipc) });
+  }
+  const corrido = baseIdx > 0;
+  return { serie, motivo: corrido ? 'base_corrida' : 'ok', baseEtiqueta: etiqueta(base.anio, base.mes) };
+}
+
+function dibujarGraficoDolarBlue() {
+  const cont = document.getElementById('chart-blue');
+  if (!cont) return;
+  const { serie, motivo, baseEtiqueta } = calcularDolarBlueReal();
+
+  if (!serie || !serie.length) {
+    Plotly.purge('chart-blue');
+    const msgs = {
+      sin_blue: 'Sin datos de dólar blue cargados.',
+      sin_ipc: 'Cargá el IPC (división "Nivel General") en la sección de Índice salarial '
+             + 'de más abajo para poder calcular el dólar blue real.',
+      sin_superposicion: 'El dólar blue y el IPC cargados no comparten ningún mes en común.',
+    };
+    cont.innerHTML = `<div class="empty">${msgs[motivo] || 'Sin datos suficientes.'}</div>`;
+    return;
+  }
+  cont.innerHTML = '';
+
+  const x = serie.map(s => isoDate(s.anio, s.mes));
+  const y = serie.map(s => s.valor);
+  const variacion = serie.map((s, i) => i === 0 ? null : (s.valor / serie[i - 1].valor - 1) * 100);
+  const hoverTexts = serie.map((s, i) => {
+    const lineas = [`<b>${etiqueta(s.anio, s.mes)}</b>`, `Real: ${nf(s.valor, 2)}`,
+                    `Nominal: ${nf(s.nominal, 2)}`];
+    if (variacion[i] != null) {
+      lineas.push(`Variación mensual: ${variacion[i] >= 0 ? '+' : ''}${nf(variacion[i], 1)}%`);
+    }
+    return lineas.join('<br>');
+  });
+
+  Plotly.newPlot('chart-blue', [
+    { x, y, name: 'Dólar blue real', type: 'scatter', mode: 'lines',
+      line: { color: '#e0a34c', width: 2 }, hoverinfo: 'text', hovertext: hoverTexts },
+  ], {
+    paper_bgcolor: '#10162e', plot_bgcolor: '#10162e',
+    font: { color: '#c8cfe6', size: 11 },
+    margin: { l: 56, r: 18, t: 12, b: 60 },
+    xaxis: {
+      gridcolor: '#1e2748', type: 'date',
+      showspikes: true, spikemode: 'across', spikesnap: 'cursor',
+      spikethickness: 1, spikedash: 'dot', spikecolor: '#8b93b8',
+      rangeslider: { visible: true, bgcolor: '#0b1020', bordercolor: '#2a3358', thickness: 0.09 },
+    },
+    yaxis: { gridcolor: '#1e2748', title: `Dólar blue real (pesos de ${baseEtiqueta})` },
+    hovermode: 'x',
+    hoverlabel: { bgcolor: '#161d3d', bordercolor: '#3a4470', font: { color: '#e4e8f5', size: 12 } },
+  }, { displayModeBar: false, responsive: true });
+
+  const nota = document.getElementById('elasticidad-blue-msg');
+  if (motivo === 'base_corrida' && nota && !nota.textContent) {
+    // Solo se pisa el mensaje si está vacío, para no taparle el resultado a
+    // estimarElasticidadDolarBlue() si ya corrió.
+    nota.style.color = '#e0c34c';
+    nota.textContent = `El IPC no cubre el primer mes del archivo de blue; se usó ${baseEtiqueta} ` +
+      'como base (primer mes en que ambas series se superponen).';
+  }
+
+  poblarSelectsRango(serie, 'rango-blue-desde', 'rango-blue-hasta');
+}
+
+function dibujarTablaDolarBlue() {
+  const tb = document.getElementById('tbody-blue');
+  const { serie } = calcularDolarBlueReal();
+  if (!serie || !serie.length) {
+    tb.innerHTML = '<tr><td colspan="3" class="empty">Sin datos de dólar blue cargados.</td></tr>';
+    return;
+  }
+  tb.innerHTML = serie.map((s, i) => {
+    const variacion = i > 0 ? (s.valor / serie[i - 1].valor - 1) * 100 : null;
+    return `<tr>
+      <td>${etiqueta(s.anio, s.mes)}</td>
+      <td class="num">${nf(s.valor, 2)}</td>
+      <td class="num" style="color:${variacion == null ? 'inherit' : (variacion >= 0 ? '#8fe3a2' : '#ff9ab0')}">${
+        variacion == null ? '—' : (variacion >= 0 ? '+' : '') + nf(variacion, 1) + '%'}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function subirDolarBlue() {
+  const input = document.getElementById('fblue-file');
+  const msg = document.getElementById('fblue-msg');
+  msg.className = 'err';
+  if (!input.files || !input.files[0]) { msg.textContent = 'Elegí un archivo primero.'; return; }
+  msg.textContent = 'Subiendo…';
+  try {
+    const fd = new FormData();
+    fd.append('file', input.files[0]);
+    fd.append('categoria', 'dolar_blue');
+    const r = await fetch('/api/proyeccion/indices/upload', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (!r.ok || d.error) { msg.textContent = d.error || `Error ${r.status}`; return; }
+    msg.className = 'ok';
+    msg.textContent = `Listo: ${d.insertados} mes(es) nuevo(s), ${d.actualizados} actualizado(s).` +
+      ((d.warnings && d.warnings.length) ? ' Avisos: ' + d.warnings.slice(0, 5).join(' · ') : '');
+    input.value = '';
+
+    const r2 = await fetch('/api/proyeccion/indices?categoria=dolar_blue');
+    const d2 = await r2.json();
+    if (!d2.error) DOLARBLUE = (d2.indices || []).filter(i => i.nombre === 'nominal');
+
+    document.getElementById('elasticidad-blue-msg').textContent = '';  // limpiar nota de base corrida vieja
+    dibujarTablaDolarBlue();
+    dibujarGraficoDolarBlue();
+  } catch (e) {
+    msg.textContent = 'Error de red: ' + e.message;
+  }
+}
+
+function estimarElasticidadDolarBlue() {
+  const msg = document.getElementById('elasticidad-blue-msg');
+  const { serie, motivo } = calcularDolarBlueReal();
+  if (!serie) {
+    msg.style.color = '#ff9a9a';
+    msg.textContent = motivo === 'sin_ipc'
+      ? 'Cargá el IPC (Nivel General) más abajo antes de estimar: sin eso no se puede '
+        + 'calcular el dólar blue real.'
+      : 'Cargá el dólar blue antes de estimar.';
+    return;
+  }
+  if (serie.length < 24) {
+    msg.style.color = '#ff9a9a';
+    msg.textContent = 'Hacen falta al menos 24 meses de dólar blue real (blue ∩ IPC) para ' +
+      'poder separar la tendencia, la estacionalidad y el efecto cambiario con confianza.';
+    return;
+  }
+
+  const bluePorPeriodo = new Map(serie.map(s => [`${s.anio}-${s.mes}`, s.valor]));
+  const datos = SERIE
+    .filter(s => !s.excluido && s.internacional_m3 > 0 && bluePorPeriodo.has(`${s.anio}-${s.mes}`))
+    .map(s => ({ ...s, fx: bluePorPeriodo.get(`${s.anio}-${s.mes}`) }));
+
+  if (datos.length < 24) {
+    msg.style.color = '#ff9a9a';
+    msg.textContent = `Solo hay ${datos.length} meses donde el histórico y el dólar blue ` +
+      'real se superponen (hacen falta al menos 24). Cargá más historia de alguno de los dos.';
+    return;
+  }
+
+  const t0 = mesIndex(datos[0].anio, datos[0].mes);
+  const X = [], y = [];
+  for (const d of datos) {
+    const t = mesIndex(d.anio, d.mes) - t0;
+    const fila = [1, t, Math.log(d.fx)];
+    for (let m = 2; m <= 12; m++) fila.push(d.mes === m ? 1 : 0);
+    X.push(fila);
+    y.push(Math.log(d.internacional_m3));
+  }
+  const k = X[0].length;
+  const XtX = [], Xty = [];
+  for (let a = 0; a < k; a++) {
+    const fila = [];
+    for (let b = 0; b < k; b++) fila.push(X.reduce((acc, r) => acc + r[a] * r[b], 0));
+    XtX.push(fila);
+    Xty.push(X.reduce((acc, r, i) => acc + r[a] * y[i], 0));
+  }
+  const beta = resolverSistema(XtX, Xty);
+  if (!beta) {
+    msg.style.color = '#ff9a9a';
+    msg.textContent = 'No se pudo separar la tendencia del efecto cambiario (el sistema queda ' +
+      'indeterminado): el dólar blue real se movió como una recta muy suave en todo el período.';
+    return;
+  }
+  const elasticidad = beta[2];
+  const crecimientoAnual = Math.exp(beta[1] * 12) - 1;
+
+  msg.style.color = '#9aa4c7';
+  msg.innerHTML = `Sobre ${datos.length} meses: elasticidad del tráfico internacional al ` +
+    `dólar blue real = <b>${elasticidad.toFixed(2)}</b> (cada 1% de suba en el dólar blue ` +
+    `real se asocia con ${elasticidad >= 0 ? 'un' : 'una caída del'} ${Math.abs(elasticidad).toFixed(2)}% ` +
+    `${elasticidad >= 0 ? 'de aumento' : ''} en el tráfico). Tendencia de fondo (ya neta del ` +
+    `efecto cambiario): <b>${(crecimientoAnual * 100).toFixed(1)}%</b> anual. ` +
+    `Este número es informativo — no pisa el campo "Crecimiento anual internacional" solo, ` +
+    `por el mismo motivo que el ITCRM de arriba.`;
+}
 
 function serieSalarialElegida() {
   const nombre = document.getElementById('fsal-serie').value;
