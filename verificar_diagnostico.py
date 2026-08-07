@@ -4,8 +4,9 @@ import shutil
 import sys
 
 os.environ['DATABASE_URL'] = 'sqlite:////tmp/verif2.db'
-sys.path.insert(0, '/home/claude/work/RUTAS-AEREAS-YPF-main')
-os.chdir('/home/claude/work/RUTAS-AEREAS-YPF-main')
+_AQUI = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _AQUI)
+os.chdir(_AQUI)
 if os.path.exists('/tmp/verif2.db'):
     os.remove('/tmp/verif2.db')
 
