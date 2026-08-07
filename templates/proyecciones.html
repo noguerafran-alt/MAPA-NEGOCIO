@@ -82,6 +82,17 @@
 
   <div class="card">
     <div class="year-mosaic" id="year-mosaic"></div>
+
+    <div class="row" style="align-items:center; gap:8px; margin-bottom:12px;">
+      <span class="note" style="margin:0;">Rango de meses (además de los botones de arriba):</span>
+      <select id="rango-desde" onchange="aplicarRangoMeses()" style="min-width:130px;"></select>
+      <span class="note" style="margin:0;">hasta</span>
+      <select id="rango-hasta" onchange="aplicarRangoMeses()" style="min-width:130px;"></select>
+      <button type="button" onclick="limpiarRangoMeses()" style="padding:6px 12px; font-size:12.5px;">
+        Limpiar rango
+      </button>
+    </div>
+
     <div id="chart"></div>
     <div class="note" id="chart-note" style="margin-top:10px;"></div>
     <div class="note" id="chart-exclusiones-note" style="margin-top:4px; color:#ff9ab0;"></div>
@@ -251,8 +262,9 @@
 
   <h2>Detalle mes a mes</h2>
   <div class="card">
+    <div style="max-height:480px; overflow-y:auto;">
     <table>
-      <thead>
+      <thead style="position:sticky; top:0; background:#10162e; z-index:1;">
         <tr>
           <th>Período</th><th></th>
           <th class="num">Cabotaje (m³)</th><th class="num">Internacional (m³)</th>
@@ -266,6 +278,7 @@
       </thead>
       <tbody id="tbody-detalle"><tr><td colspan="11" class="empty">Cargando…</td></tr></tbody>
     </table>
+    </div>
   </div>
 
   <h2>Mercado real por empresa (calibración)</h2>
@@ -951,6 +964,70 @@ function dibujarMosaicoAnios(proy, ultimoRealDate, finProyeccionDate) {
   // Marcar como activo el que coincide con la vista inicial (arranca en "Proyección").
   const activo = cont.querySelector(`[data-id="${ultimoRealDate ? 'proyeccion' : 'todo'}"]`);
   if (activo) activo.classList.add('active');
+
+  poblarSelectsRangoMeses(min, max);
+}
+
+// Selects "Desde" / "Hasta": filtro por mes-año independiente del mosaico de arriba, para
+// rangos que no arrancan ni terminan en 1° de enero (ej. "de agosto de 2019 a marzo de
+// 2023"). Se reconstruyen junto con el mosaico porque comparten el mismo min/max de años.
+function poblarSelectsRangoMeses(min, max) {
+  const desde = document.getElementById('rango-desde');
+  const hasta = document.getElementById('rango-hasta');
+  if (!desde || !hasta) return;
+
+  const opciones = [];
+  for (let a = min; a <= max; a++) {
+    for (let m = 1; m <= 12; m++) opciones.push(`${a}-${String(m).padStart(2, '0')}`);
+  }
+  const html = opciones.map(v => {
+    const [a, m] = v.split('-');
+    return `<option value="${v}">${MESES[parseInt(m, 10) - 1]} ${a}</option>`;
+  }).join('');
+
+  desde.innerHTML = html;
+  hasta.innerHTML = html;
+  desde.value = opciones[0];
+  hasta.value = opciones[opciones.length - 1];
+}
+
+function aplicarRangoMeses() {
+  const desde = document.getElementById('rango-desde').value;  // "AAAA-MM"
+  const hasta = document.getElementById('rango-hasta').value;
+  if (!desde || !hasta) return;
+
+  let [a0, m0] = desde.split('-').map(Number);
+  let [a1, m1] = hasta.split('-').map(Number);
+  if (a1 < a0 || (a1 === a0 && m1 < m0)) {
+    // "Hasta" quedó antes que "Desde": se intercambian en vez de mostrar un gráfico vacío,
+    // total el usuario claramente quiso ver ese período, sólo eligió los selects al revés.
+    [a0, m0, a1, m1] = [a1, m1, a0, m0];
+    document.getElementById('rango-desde').value = `${a0}-${String(m0).padStart(2, '0')}`;
+    document.getElementById('rango-hasta').value = `${a1}-${String(m1).padStart(2, '0')}`;
+  }
+
+  const x0 = isoDate(a0, m0);
+  // fin de rango EXCLUSIVO: el 1° del mes siguiente al de "Hasta", mismo criterio que usan
+  // los tiles de año (`${a+1}-01-01`), para que el mes elegido en "Hasta" se vea completo.
+  const x1 = (m1 === 12) ? isoDate(a1 + 1, 1) : isoDate(a1, m1 + 1);
+  Plotly.relayout('chart', { 'xaxis.range': [x0, x1] });
+
+  // El rango de meses es independiente del mosaico: se apaga cualquier tile de año activo,
+  // para que no quede un botón marcado como si describiera lo que en realidad se está viendo.
+  aniosSeleccionados.clear();
+  document.querySelectorAll('#year-mosaic .year-tile').forEach(b => b.classList.remove('active'));
+}
+
+function limpiarRangoMeses() {
+  const desde = document.getElementById('rango-desde');
+  const hasta = document.getElementById('rango-hasta');
+  if (desde && desde.options.length) desde.value = desde.options[0].value;
+  if (hasta && hasta.options.length) hasta.value = hasta.options[hasta.options.length - 1].value;
+  // Volver a la vista por defecto: "Proyección" si hay datos reales, si no "Todo" —
+  // exactamente el mismo criterio que ya usa dibujarMosaicoAnios() al construirse.
+  const idProyeccion = MOSAICO_TILES.findIndex(t => t.id === 'proyeccion');
+  const idTodo = MOSAICO_TILES.findIndex(t => t.id === 'todo');
+  zoomAnioMosaico(idProyeccion >= 0 ? idProyeccion : idTodo);
 }
 
 // "Todo" y "Proyección" son exclusivos (van solos). Los años sueltos se pueden ir tildando
