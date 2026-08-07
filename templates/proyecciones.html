@@ -352,6 +352,16 @@
     <div class="err" id="ffx-msg"></div>
     <div class="note" id="elasticidad-msg" style="margin-top:8px;"></div>
 
+    <div class="row" style="align-items:center; gap:8px; margin-top:10px;">
+      <span class="note" style="margin:0;">Rango de meses:</span>
+      <select id="rango-fx-desde" onchange="aplicarRangoFX()" style="min-width:130px;"></select>
+      <span class="note" style="margin:0;">hasta</span>
+      <select id="rango-fx-hasta" onchange="aplicarRangoFX()" style="min-width:130px;"></select>
+      <button type="button" onclick="limpiarRangoFX()" style="padding:6px 12px; font-size:12.5px;">
+        Limpiar rango
+      </button>
+    </div>
+
     <div id="chart-fx" style="margin-top:14px; min-height:280px;"></div>
 
     <div style="max-height:480px; overflow-y:auto; margin-top:12px;">
@@ -433,6 +443,16 @@
     </div>
     <div class="err" id="fsal-msg"></div>
     <div class="note" id="elasticidad-salarios-msg" style="margin-top:8px;"></div>
+
+    <div class="row" style="align-items:center; gap:8px; margin-top:10px;">
+      <span class="note" style="margin:0;">Rango de meses:</span>
+      <select id="rango-sal-desde" onchange="aplicarRangoSalarios()" style="min-width:130px;"></select>
+      <span class="note" style="margin:0;">hasta</span>
+      <select id="rango-sal-hasta" onchange="aplicarRangoSalarios()" style="min-width:130px;"></select>
+      <button type="button" onclick="limpiarRangoSalarios()" style="padding:6px 12px; font-size:12.5px;">
+        Limpiar rango
+      </button>
+    </div>
 
     <div id="chart-salarios" style="margin-top:14px; min-height:280px;"></div>
 
@@ -1868,6 +1888,8 @@ function dibujarGraficoFX() {
     hovermode: 'x',
     hoverlabel: { bgcolor: '#161d3d', bordercolor: '#3a4470', font: { color: '#e4e8f5', size: 12 } },
   }, { displayModeBar: false, responsive: true });
+
+  poblarSelectsRango(serie, 'rango-fx-desde', 'rango-fx-hasta');
 }
 
 // Muestra la sub-serie nominal elegida en #fsal-serie y, si hay IPC cargado para la
@@ -1952,7 +1974,71 @@ function dibujarGraficoSalarios() {
   }
 
   Plotly.newPlot('chart-salarios', traces, layout, { displayModeBar: false, responsive: true });
+
+  poblarSelectsRango(nominal, 'rango-sal-desde', 'rango-sal-hasta');
 }
+
+// ---------------------------------------------------------------- rango de meses (FX / salarios)
+// Misma idea que el rango de meses del gráfico principal (poblarSelectsRangoMeses /
+// aplicarRangoMeses / limpiarRangoMeses), pero factorizada para reusarla en dos gráficos
+// más chicos que no tienen mosaico de años: acá alcanza con min/max de la propia serie que
+// se está graficando, sin necesidad de cruzar con SERIE (el histórico de rutas).
+function poblarSelectsRango(serieOrdenada, idDesde, idHasta) {
+  const desde = document.getElementById(idDesde);
+  const hasta = document.getElementById(idHasta);
+  if (!desde || !hasta || !serieOrdenada.length) return;
+
+  const min = serieOrdenada[0], max = serieOrdenada[serieOrdenada.length - 1];
+  const opciones = [];
+  for (let a = min.anio; a <= max.anio; a++) {
+    const mIni = (a === min.anio) ? min.mes : 1;
+    const mFin = (a === max.anio) ? max.mes : 12;
+    for (let m = mIni; m <= mFin; m++) opciones.push(`${a}-${String(m).padStart(2, '0')}`);
+  }
+  const html = opciones.map(v => {
+    const [a, m] = v.split('-');
+    return `<option value="${v}">${MESES[parseInt(m, 10) - 1]} ${a}</option>`;
+  }).join('');
+
+  // Conservar la selección previa si sigue existiendo entre las opciones nuevas (por
+  // ejemplo, tras subir un archivo que agrega meses al final pero no cambia el principio).
+  const prevDesde = desde.value, prevHasta = hasta.value;
+  desde.innerHTML = html;
+  hasta.innerHTML = html;
+  desde.value = opciones.includes(prevDesde) ? prevDesde : opciones[0];
+  hasta.value = opciones.includes(prevHasta) ? prevHasta : opciones[opciones.length - 1];
+}
+
+function aplicarRangoGenerico(idDesde, idHasta, idChart) {
+  const desde = document.getElementById(idDesde).value;  // "AAAA-MM"
+  const hasta = document.getElementById(idHasta).value;
+  if (!desde || !hasta) return;
+
+  let [a0, m0] = desde.split('-').map(Number);
+  let [a1, m1] = hasta.split('-').map(Number);
+  if (a1 < a0 || (a1 === a0 && m1 < m0)) {
+    [a0, m0, a1, m1] = [a1, m1, a0, m0];
+    document.getElementById(idDesde).value = `${a0}-${String(m0).padStart(2, '0')}`;
+    document.getElementById(idHasta).value = `${a1}-${String(m1).padStart(2, '0')}`;
+  }
+
+  const x0 = isoDate(a0, m0);
+  const x1 = (m1 === 12) ? isoDate(a1 + 1, 1) : isoDate(a1, m1 + 1);
+  Plotly.relayout(idChart, { 'xaxis.range': [x0, x1] });
+}
+
+function limpiarRangoGenerico(idDesde, idHasta, idChart) {
+  const desde = document.getElementById(idDesde);
+  const hasta = document.getElementById(idHasta);
+  if (desde && desde.options.length) desde.value = desde.options[0].value;
+  if (hasta && hasta.options.length) hasta.value = hasta.options[hasta.options.length - 1].value;
+  Plotly.relayout(idChart, { 'xaxis.autorange': true });
+}
+
+function aplicarRangoFX() { aplicarRangoGenerico('rango-fx-desde', 'rango-fx-hasta', 'chart-fx'); }
+function limpiarRangoFX() { limpiarRangoGenerico('rango-fx-desde', 'rango-fx-hasta', 'chart-fx'); }
+function aplicarRangoSalarios() { aplicarRangoGenerico('rango-sal-desde', 'rango-sal-hasta', 'chart-salarios'); }
+function limpiarRangoSalarios() { limpiarRangoGenerico('rango-sal-desde', 'rango-sal-hasta', 'chart-salarios'); }
 
 function serieSalarialElegida() {
   const nombre = document.getElementById('fsal-serie').value;
