@@ -12,7 +12,7 @@ Ahora hay tres capas:
 1) FLOTA CALIBRADA (flota.json)
    Para cada tipo de avión: asientos, alcance práctico, y los coeficientes (a, b) de
    consumo_toneladas = a_t + b_kg_km * distancia_km / 1000, ajustados por regresión sobre
-   la planilla real de consumo de YPF Aviación. El ajuste da MAPE < 1% en los tipos con
+   la planilla real de consumo. El ajuste da MAPE < 1% en los tipos con
    muestra suficiente, así que extrapolar a rutas nuevas es seguro.
 
 2) MATRIZ REAL POR RUTA (consumo_rutas.json)
