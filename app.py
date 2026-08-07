@@ -3116,6 +3116,71 @@ def _parse_indec_formato_largo(filas, encabezado, categoria):
     return list(por_clave.values()), warnings
 
 
+# Mapeo manual de abreviatura de mes en inglés -> número, en vez de confiar en
+# datetime.strptime('%b', ...) que depende del locale del sistema operativo (en un locale
+# no inglés, "Aug" no matchea). Así el parseo es determinístico sin importar dónde corra.
+_MES_ABR_EN = {'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+               'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12}
+
+
+def parse_dolar_blue_csv(file_obj):
+    """CSV diario tal cual lo exportan varios trackers del dólar blue: encabezado
+    'category,valor', fecha en inglés y en su propia columna ('Mon Aug 08 2016'),
+    separador coma, PUNTO decimal — el único CSV de todo el proyecto que no viene en
+    formato argentino (los de INDEC usan ';' y coma decimal).
+
+    Se promedian los valores diarios de cada mes calendario para bajar la serie a
+    granularidad mensual, que es con la que trabaja el resto de la app. Se guarda como
+    IndiceEconomico(categoria='dolar_blue', nombre='nominal'): mismo mecanismo genérico que
+    salarios e IPC, así que /api/proyeccion/indices?categoria=dolar_blue ya sirve para
+    leerlo de vuelta sin agregar un endpoint GET nuevo."""
+    texto = file_obj.read()
+    if isinstance(texto, bytes):
+        try:
+            texto = texto.decode('utf-8-sig')
+        except UnicodeDecodeError:
+            texto = texto.decode('latin-1')
+    lector = csv.reader(io.StringIO(texto))
+    filas = list(lector)
+    if not filas:
+        return [], ["El archivo está vacío."]
+    encabezado = [h.strip().lower() for h in filas[0]]
+    if len(encabezado) < 2:
+        return [], ["Se esperaban 2 columnas: fecha y valor, separadas por coma."]
+
+    por_mes = {}  # (anio, mes) -> lista de valores diarios, para promediar
+    warnings = []
+    for i, fila in enumerate(filas[1:], start=2):
+        if not fila or len(fila) < 2 or not fila[0].strip():
+            continue
+        fecha_raw = fila[0].strip()
+        valor_raw = fila[1].strip()
+        partes = fecha_raw.split()
+        if len(partes) != 4 or partes[1] not in _MES_ABR_EN:
+            warnings.append(f"Fila {i}: no se pudo leer la fecha '{fecha_raw}' (se espera "
+                            f"'Dow Mon DD AAAA', ej. 'Mon Aug 08 2016'), se saltea.")
+            continue
+        mes = _MES_ABR_EN[partes[1]]
+        try:
+            anio = int(partes[3])
+        except ValueError:
+            warnings.append(f"Fila {i}: año inválido en '{fecha_raw}', se saltea.")
+            continue
+        try:
+            valor = float(valor_raw)
+        except ValueError:
+            warnings.append(f"Fila {i}: valor '{valor_raw}' no es numérico, se saltea.")
+            continue
+        por_mes.setdefault((anio, mes), []).append(valor)
+
+    registros = [
+        {'categoria': 'dolar_blue', 'nombre': 'nominal', 'anio': anio, 'mes': mes,
+         'valor': sum(vals) / len(vals)}
+        for (anio, mes), vals in por_mes.items()
+    ]
+    return registros, warnings
+
+
 @app.route('/api/proyeccion/indices')
 @limiter.limit("60 per minute")
 def api_proyeccion_indices():
@@ -3152,11 +3217,18 @@ def api_proyeccion_indices_upload():
             return jsonify({"error": "Subí un archivo CSV (.csv) válido"}), 400
 
         try:
-            registros, warnings = parse_indec_csv(f, categoria)
+            if categoria == 'dolar_blue':
+                registros, warnings = parse_dolar_blue_csv(f)
+            else:
+                registros, warnings = parse_indec_csv(f, categoria)
         except Exception as e:
             return jsonify({"error": f"No se pudo leer el CSV: {e}"}), 400
 
         if not registros:
+            if categoria == 'dolar_blue':
+                return jsonify({"error": "No se encontró ninguna fila válida. Se espera "
+                                         "'category,valor' con fecha en inglés (ej. 'Mon Aug "
+                                         "08 2016') y punto decimal."}), 400
             return jsonify({"error": "No se encontró ninguna fila válida. Se espera "
                                      "'periodo;columna1;columna2;...' separado por ';', con "
                                      "fechas d/m/aaaa y coma como separador decimal."}), 400
