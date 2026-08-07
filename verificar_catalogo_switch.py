@@ -4,8 +4,12 @@ import os
 import sys
 
 os.environ['DATABASE_URL'] = 'sqlite:////tmp/verif3.db'
-sys.path.insert(0, '/home/claude/work/RUTAS-AEREAS-YPF-main')
-os.chdir('/home/claude/work/RUTAS-AEREAS-YPF-main')
+# Antes: ruta absoluta hardcodeada a un sandbox de desarrollo puntual, que no existe fuera
+# de esa máquina (rompía este script en cualquier otro lugar: Render, otra PC, CI). Se usa
+# la carpeta donde vive el propio script, igual que el resto de los verificar_*.py.
+_AQUI = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _AQUI)
+os.chdir(_AQUI)
 if os.path.exists('/tmp/verif3.db'):
     os.remove('/tmp/verif3.db')
 
