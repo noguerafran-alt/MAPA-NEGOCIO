@@ -8,17 +8,24 @@
 """
 import json
 import math
+import os
 import re
 import sys
 import unicodedata
 
 import openpyxl
 
-sys.path.insert(0, '/home/claude/work/RUTAS-AEREAS-YPF-main')
+# Antes: ruta absoluta hardcodeada a un sandbox de desarrollo puntual, y el Excel de
+# entrada apuntando a la carpeta de uploads de esa misma sesión — ninguna de las dos
+# existe fuera de ahí. Ahora todo es relativo a dónde vive este script, y el Excel se
+# puede pasar como argumento (por defecto busca el archivo al lado del script, con el
+# nombre que se viene usando).
+_AQUI = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _AQUI)
 from geocode import COORDS  # noqa
 
-XLSX = '/mnt/user-data/uploads/rutas_aereas_consumo_combustible.xlsx'
-OUT_DIR = '/home/claude/work/RUTAS-AEREAS-YPF-main'
+XLSX = sys.argv[1] if len(sys.argv) > 1 else os.path.join(_AQUI, 'rutas_aereas_consumo_combustible.xlsx')
+OUT_DIR = _AQUI
 
 
 # ---------------------------------------------------------------- normalizacion
