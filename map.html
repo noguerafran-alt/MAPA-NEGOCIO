@@ -184,26 +184,7 @@
   }
   .acm-btn:hover { background: #4c7cf0; border-color: #4c7cf0; color: #fff; }
 
-  #fuel-unlock-overlay {
-    display: none; position: fixed; inset: 0; z-index: 50;
-    background: rgba(0,0,0,0.6); align-items: center; justify-content: center;
-  }
-  #fuel-unlock-overlay.show { display: flex; }
-  #fuel-unlock-modal {
-    background: rgba(16,22,46,0.98); border: 1px solid #4c7cf0; border-radius: 12px;
-    padding: 20px 22px; width: min(320px, 90vw); box-shadow: 0 12px 40px rgba(0,0,0,0.6);
-  }
-  #fuel-unlock-title { font-size: 14px; font-weight: bold; color: #eee; margin-bottom: 14px; }
-  #fuel-unlock-password {
-    width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px;
-    border: 1px solid #3a4470; background: #0b1020; color: #fff; font-size: 13px; margin-bottom: 8px;
-  }
-  #fuel-unlock-error { color: #e0524f; font-size: 12px; min-height: 16px; margin-bottom: 8px; }
-  #fuel-unlock-submit {
-    width: 100%; background: #4c7cf0; border: none; color: #fff; border-radius: 6px;
-    padding: 8px 10px; font-size: 13px; cursor: pointer; margin: 0;
-  }
-  #fuel-unlock-submit:hover { background: #3a67d8; }
+  .fuel-locked-row, .fuel-locked-cell { cursor: default; opacity: 0.55; }
 
   #fuel-sales-title-wrap:hover #fuel-sales-title-tooltip { display: block; }
   .fst-row { display: flex; justify-content: space-between; padding: 2px 0; gap: 10px; }
@@ -275,9 +256,9 @@
         <div class="fst-row"><span class="fst-label">Vuelos</span><span id="ait-vuelos" class="fst-value"></span></div>
         <div class="fst-row"><span class="fst-label">Despachos totales</span><span id="ait-despachos" class="fst-value"></span></div>
         <div class="fst-row"><span class="fst-label">Volumen total</span><span id="ait-volumen" class="fst-value"></span></div>
-        <div class="fst-row fuel-locked-row" onclick="promptFuelUnlock()"><span class="fst-label">Ingreso total</span><span id="ait-ingreso" class="fst-value"></span></div>
-        <div class="fst-row fuel-locked-row" onclick="promptFuelUnlock()"><span class="fst-label">Precio promedio</span><span id="ait-precio" class="fst-value"></span></div>
-        <div class="fst-row fuel-locked-row" onclick="promptFuelUnlock()"><span class="fst-label">Ingreso prom./despacho</span><span id="ait-ingreso-despacho" class="fst-value"></span></div>
+        <div class="fst-row fuel-locked-row" title="Precios e ingresos: hace falta una cuenta de nivel 2 o superior"><span class="fst-label">Ingreso total</span><span id="ait-ingreso" class="fst-value"></span></div>
+        <div class="fst-row fuel-locked-row" title="Precios e ingresos: hace falta una cuenta de nivel 2 o superior"><span class="fst-label">Precio promedio</span><span id="ait-precio" class="fst-value"></span></div>
+        <div class="fst-row fuel-locked-row" title="Precios e ingresos: hace falta una cuenta de nivel 2 o superior"><span class="fst-label">Ingreso prom./despacho</span><span id="ait-ingreso-despacho" class="fst-value"></span></div>
         <div class="fst-row"><span class="fst-label">Volumen prom./despacho</span><span id="ait-volumen-despacho" class="fst-value"></span></div>
       </div>
     </div>
@@ -350,9 +331,9 @@
           <div class="fst-row"><span class="fst-label">Vuelos</span><span id="fst-vuelos" class="fst-value"></span></div>
           <div class="fst-row"><span class="fst-label">Despachos totales</span><span id="fst-despachos" class="fst-value"></span></div>
           <div class="fst-row"><span class="fst-label">Volumen total</span><span id="fst-volumen" class="fst-value"></span></div>
-          <div class="fst-row fuel-locked-row" onclick="promptFuelUnlock()"><span class="fst-label">Ingreso total</span><span id="fst-ingreso" class="fst-value"></span></div>
-          <div class="fst-row fuel-locked-row" onclick="promptFuelUnlock()"><span class="fst-label">Precio promedio</span><span id="fst-precio" class="fst-value"></span></div>
-          <div class="fst-row fuel-locked-row" onclick="promptFuelUnlock()"><span class="fst-label">Ingreso prom./despacho</span><span id="fst-ingreso-despacho" class="fst-value"></span></div>
+          <div class="fst-row fuel-locked-row" title="Precios e ingresos: hace falta una cuenta de nivel 2 o superior"><span class="fst-label">Ingreso total</span><span id="fst-ingreso" class="fst-value"></span></div>
+          <div class="fst-row fuel-locked-row" title="Precios e ingresos: hace falta una cuenta de nivel 2 o superior"><span class="fst-label">Precio promedio</span><span id="fst-precio" class="fst-value"></span></div>
+          <div class="fst-row fuel-locked-row" title="Precios e ingresos: hace falta una cuenta de nivel 2 o superior"><span class="fst-label">Ingreso prom./despacho</span><span id="fst-ingreso-despacho" class="fst-value"></span></div>
           <div class="fst-row"><span class="fst-label">Volumen prom./despacho</span><span id="fst-volumen-despacho" class="fst-value"></span></div>
         </div>
       </div>
@@ -415,7 +396,6 @@ function colorForRoute(routeKey) {
 }
 
 let selectedYears = new Set(); // multi-year selection
-let fuelAccessUnlocked = false;
 
 fetch('/api/data').then(r => r.json()).then(d => {
   DATA = d;
@@ -431,8 +411,6 @@ fetch('/api/data').then(r => r.json()).then(d => {
         ok ? `${md.tipos_en_flota} tipos de avión · ${md.rutas_con_consumo_real} rutas con consumo real`
            : 'Faltan flota.json y/o consumo_rutas.json en el servidor'}">${d.version}</span>`;
   }
-  fuelAccessUnlocked = !!d.fuel_access;
-  updateUnlockFuelBtn();
   selectedYears = new Set([DATA.years[DATA.years.length - 1]]);
   buildYearDropdown();
   updateYearBtnLabel();
@@ -1400,9 +1378,9 @@ function renderFuelSalesTable() {
       <td>${r.destino || '—'}</td>
       <td>${r.cant_vuelos.toLocaleString('es-AR')}</td>
       <td>${r.volumen_m3.toLocaleString('es-AR', {maximumFractionDigits: 3})}</td>
-      <td class="${fuelAccess ? '' : 'fuel-locked-cell'}" ${fuelAccess ? '' : 'onclick="promptFuelUnlock()"'}>${precioCell}</td>
-      <td class="${fuelAccess ? '' : 'fuel-locked-cell'}" ${fuelAccess ? '' : 'onclick="promptFuelUnlock()"'}>${ingresoCell}</td>
-      <td class="${fuelAccess ? '' : 'fuel-locked-cell'}" ${fuelAccess ? '' : 'onclick="promptFuelUnlock()"'}>${ingresoPorVueloCell}</td>
+      <td class="${fuelAccess ? '' : 'fuel-locked-cell'}" ${fuelAccess ? '' : 'title="Precios e ingresos: hace falta una cuenta de nivel 2 o superior"'}>${precioCell}</td>
+      <td class="${fuelAccess ? '' : 'fuel-locked-cell'}" ${fuelAccess ? '' : 'title="Precios e ingresos: hace falta una cuenta de nivel 2 o superior"'}>${ingresoCell}</td>
+      <td class="${fuelAccess ? '' : 'fuel-locked-cell'}" ${fuelAccess ? '' : 'title="Precios e ingresos: hace falta una cuenta de nivel 2 o superior"'}>${ingresoPorVueloCell}</td>
       <td>${r.volumen_por_vuelo.toLocaleString('es-AR', {maximumFractionDigits: 3})}</td>`;
     tbody.appendChild(tr);
   });
@@ -1949,19 +1927,6 @@ function selectAllMonths() {
   ⏻ Salir
 </a>
 
-<button id="unlock-fuel-btn" style="position: fixed; bottom: 12px; font-size: 11px; color: #9aa4c7; background: rgba(16,22,46,0.88); backdrop-filter: blur(6px); border: 1px solid #2a3358; border-radius: 8px; padding: 6px 12px; visibility: hidden; cursor: pointer; margin: 0;">
-  🔒 Desbloquear datos
-</button>
-
-<div id="fuel-unlock-overlay" onclick="if(event.target===this) closeFuelUnlockModal()">
-  <div id="fuel-unlock-modal">
-    <div id="fuel-unlock-title">Desbloquear datos de combustible</div>
-    <input type="password" id="fuel-unlock-password" placeholder="Contraseña">
-    <div id="fuel-unlock-error"></div>
-    <button id="fuel-unlock-submit">Desbloquear</button>
-  </div>
-</div>
-
 <div id="credit" style="position: fixed; bottom: 12px; right: 12px; font-size: 11px; color: #9aa4c7; background: rgba(16,22,46,0.88); backdrop-filter: blur(6px); border: 1px solid #2a3358; border-radius: 8px; padding: 6px 12px;">
   Desarrollado por Francisco Luis Noguera para YPF Aviación
 </div>
@@ -1976,8 +1941,7 @@ function selectAllMonths() {
     const aerolineasLink = document.getElementById('aerolineas-link');
     const adminLink = document.getElementById('admin-link');
     const logoutLink = document.getElementById('logout-link');
-    const unlockBtn = document.getElementById('unlock-fuel-btn');
-    if (!credit || !proyeccionesLink || !aerolineasLink || !adminLink || !logoutLink || !unlockBtn) return;
+    if (!credit || !proyeccionesLink || !aerolineasLink || !adminLink || !logoutLink) return;
 
     const creditWidth = credit.getBoundingClientRect().width;
     const proyeccionesRight = 12 + creditWidth + 8;
@@ -1998,85 +1962,10 @@ function selectAllMonths() {
     const logoutRight = adminRight + adminWidth + 8;
     logoutLink.style.right = logoutRight + 'px';
     logoutLink.style.visibility = 'visible';
-
-    const logoutWidth = logoutLink.getBoundingClientRect().width;
-    unlockBtn.style.right = (logoutRight + logoutWidth + 8) + 'px';
-    unlockBtn.style.visibility = 'visible';
   }
   window.addEventListener('load', positionAdminLink);
   window.addEventListener('resize', positionAdminLink);
-
-  // ---------- Segunda capa de contraseña: desbloquear datos de combustible ----------
-  function updateUnlockFuelBtn() {
-    const btn = document.getElementById('unlock-fuel-btn');
-    if (!btn) return;
-    if (fuelAccessUnlocked) {
-      btn.textContent = '🔓 Datos desbloqueados';
-      btn.disabled = true;
-      btn.style.cursor = 'default';
-      btn.style.opacity = '0.7';
-    } else {
-      btn.textContent = '🔒 Desbloquear datos';
-      btn.disabled = false;
-      btn.style.cursor = 'pointer';
-      btn.style.opacity = '1';
-    }
-    positionAdminLink();
-  }
-  updateUnlockFuelBtn(); // aplica el estado ya conocido (por si /api/data ya había resuelto fuel_access)
-
-  function promptFuelUnlock() {
-    if (fuelAccessUnlocked) return;
-    document.getElementById('fuel-unlock-password').value = '';
-    document.getElementById('fuel-unlock-error').textContent = '';
-    document.getElementById('fuel-unlock-overlay').classList.add('show');
-    document.getElementById('fuel-unlock-password').focus();
-  }
-  window.promptFuelUnlock = promptFuelUnlock;
-
-  document.getElementById('unlock-fuel-btn').addEventListener('click', promptFuelUnlock);
-
-  function closeFuelUnlockModal() {
-    document.getElementById('fuel-unlock-overlay').classList.remove('show');
-  }
-
-  async function submitFuelUnlock() {
-    const password = document.getElementById('fuel-unlock-password').value;
-    const errEl = document.getElementById('fuel-unlock-error');
-    errEl.textContent = '';
-    if (!password) { errEl.textContent = 'Ingresá una contraseña.'; return; }
-    try {
-      const res = await fetch('/fuel_login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'password=' + encodeURIComponent(password),
-      });
-      const data = await res.json();
-      if (!res.ok || data.error) {
-        errEl.textContent = data.error || 'Contraseña incorrecta.';
-        return;
-      }
-      fuelAccessUnlocked = true;
-      closeFuelUnlockModal();
-      updateUnlockFuelBtn();
-      // Recarga solo los datos (no la página) para que el hover del mapa y el tooltip del
-      // desplegable ya muestren combustible, sin perder año/mes/filtros que el usuario eligió.
-      try {
-        const dataRes = await fetch('/api/data');
-        DATA = await dataRes.json();
-        render();
-      } catch (err) { /* si falla el refresh, el próximo cambio de filtro igual va a traer los datos nuevos */ }
-    } catch (err) {
-      errEl.textContent = 'Error: ' + err;
-    }
-  }
-
-  document.getElementById('fuel-unlock-submit').addEventListener('click', submitFuelUnlock);
-  document.getElementById('fuel-unlock-password').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') submitFuelUnlock();
-  });
 </script>
 
 </body>
 </html>
-
