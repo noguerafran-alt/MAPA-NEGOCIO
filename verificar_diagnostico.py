@@ -17,7 +17,7 @@ with app.app_context():
 
 c = app.test_client()
 with c.session_transaction() as s:
-    s['map_access'] = True
+    s['user_email'] = 'test@ypf.com'; s['user_nivel'] = 1
 
 print('--- /api/deploy_status con todo presente')
 d = c.get('/api/deploy_status').get_json()
@@ -55,7 +55,7 @@ import app as app_module
 importlib.reload(app_module)
 c2 = app_module.app.test_client()
 with c2.session_transaction() as s:
-    s['map_access'] = True
+    s['user_email'] = 'test@ypf.com'; s['user_nivel'] = 1
 with app_module.app.app_context():
     app_module.ensure_tables()
 r = c2.get('/proyecciones')
