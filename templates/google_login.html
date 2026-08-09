@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Acceso — Rutas Aéreas YPF Aviación</title>
+<style>
+  body { font-family: Arial, sans-serif; background: #0b1020; color: #eee; display: flex;
+         align-items: center; justify-content: center; height: 100vh; margin: 0; }
+  .card { background: #10162e; padding: 34px 38px; border-radius: 12px; border: 1px solid #2a3358;
+          width: 340px; text-align: center; }
+  h1 { font-size: 18px; margin-top: 0; margin-bottom: 4px; }
+  p.subtitle { color: #9aa4c7; font-size: 12.5px; margin-top: 0; margin-bottom: 24px; }
+  .error { color: #e0663f; font-size: 12.5px; margin: 0 0 16px 0; line-height: 1.5; }
+  a.google-btn {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    width: 100%; padding: 11px; border-radius: 6px; border: 1px solid #3a4470;
+    background: #fff; color: #1a1a1a; font-weight: bold; font-size: 14px;
+    text-decoration: none; box-sizing: border-box; transition: background .15s;
+  }
+  a.google-btn:hover { background: #f0f0f0; }
+  a.google-btn svg { width: 18px; height: 18px; }
+  .nota { color: #6b7592; font-size: 11px; margin-top: 18px; line-height: 1.5; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>🔒 Rutas Aéreas — YPF Aviación</h1>
+    <p class="subtitle">Entrá con tu cuenta de Google.</p>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    <a class="google-btn" href="/login/google">
+      <svg viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 8 3l6-6C34.5 5.1 29.6 3 24 3 12.4 3 3 12.4 3 24s9.4 21 21 21 21-9.4 21-21c0-1.4-.1-2.8-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 15.1 19 12 24 12c3.1 0 5.8 1.1 8 3l6-6C34.5 5.1 29.6 3 24 3 16.2 3 9.5 7.4 6.3 14.7z"/><path fill="#4CAF50" d="M24 45c5.5 0 10.4-1.9 14.1-5.1l-6.5-5.5C29.6 36.1 26.9 37 24 37c-5.2 0-9.6-3.3-11.2-7.9l-6.5 5C9.4 40.6 16.1 45 24 45z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.2 4.2-4.1 5.6l6.5 5.5C41.4 36 45 30.6 45 24c0-1.4-.1-2.8-.4-3.5z"/></svg>
+      Iniciar sesión con Google
+    </a>
+    <p class="nota">
+      Si tu cuenta no está autorizada, pedile a un administrador que te dé de alta
+      desde el panel de admin.
+    </p>
+  </div>
+</body>
+</html>
