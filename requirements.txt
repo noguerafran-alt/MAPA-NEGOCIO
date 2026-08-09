@@ -2,6 +2,7 @@ Flask
 Flask-SQLAlchemy
 Flask-Compress
 Flask-Limiter
+Authlib
 psycopg2-binary
 openpyxl
 pypdf
