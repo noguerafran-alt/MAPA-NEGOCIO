@@ -3,9 +3,11 @@ import gc
 import json
 import csv
 import io
-import hmac
 import unicodedata
+import getpass
+import click
 from datetime import datetime
+from functools import wraps
 
 from flask import Flask, jsonify, request, render_template, send_file, session, redirect, url_for
 from flask_compress import Compress
@@ -13,12 +15,13 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.utils import secure_filename
 from sqlalchemy import func
+from authlib.integrations.flask_client import OAuth
 import openpyxl
 
 from models import db, RouteMonthly, AirportMonthly, Airport, Aircraft, UploadLog, ManualRoute, \
     AirlineMonthly, AirlineUploadLog, AirlineLoadFactorSnapshot, FuelSale, FuelSaleUploadLog, \
     AirportAlias, ProyeccionRuta, ProyeccionConfig, ProyeccionExclusion, MercadoMensual, \
-    TipoCambioMensual, IndiceEconomico, AdminFile
+    TipoCambioMensual, IndiceEconomico, AdminFile, User
 from parser import parse_workbook, rows_to_monthly_records, MONTH_ORDER
 from parser_aerolineas import extract_report
 from geocode import COORDS, ARGENTINA_NAMES
@@ -69,17 +72,45 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_pre_ping': True}
 
 db.init_app(app)
 
-ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'changeme')
-MAP_PASSWORD = os.environ.get('MAP_PASSWORD', 'changeme-map')
-FUEL_PASSWORD = os.environ.get('FUEL_PASSWORD', 'changeme-fuel')  # segunda capa, solo para datos de combustible
+GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
+GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
+if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET) and os.environ.get('RENDER'):
+    app.logger.warning("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET no están configuradas como "
+                        "variables de entorno en Render. El login con Google no va a funcionar "
+                        "hasta que se configuren en el dashboard.")
+
+oauth = OAuth(app)
+google_oauth = oauth.register(
+    name='google',
+    client_id=GOOGLE_CLIENT_ID,
+    client_secret=GOOGLE_CLIENT_SECRET,
+    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+    client_kwargs={'scope': 'openid email profile'},
+)
 
 
-def _passwords_match(supplied, expected):
-    """Comparación segura contra timing attacks (en vez de == directo). Ambos deben
-    ser str; se descarta si alguno falta para no comparar con None."""
-    if not supplied or not expected:
-        return False
-    return hmac.compare_digest(supplied, expected)
+def nivel_actual():
+    """Nivel de acceso (0-3) de la sesión actual. 0 = no autenticado."""
+    return session.get('user_nivel', 0)
+
+
+def requiere_nivel(minimo):
+    """Decorador para rutas: exige que la sesión tenga al menos `minimo` de nivel.
+
+    Las rutas de página (GET, para que las vea una persona en el navegador) redirigen al
+    login; las de API (todo lo que cuelga de /api/ o que responde a POST/JSON) devuelven
+    401 en JSON -- mismo criterio que ya usaba cada endpoint individualmente antes de esto,
+    para no romper ningún fetch() del frontend que espera JSON incluso en el error."""
+    def decorador(f):
+        @wraps(f)
+        def envoltorio(*args, **kwargs):
+            if nivel_actual() < minimo:
+                if request.path.startswith('/api/') or request.method != 'GET':
+                    return jsonify({"error": "No autorizado"}), 401
+                return redirect(url_for('login_page'))
+            return f(*args, **kwargs)
+        return envoltorio
+    return decorador
 
 
 
@@ -131,6 +162,37 @@ def init_db():
                 db.session.add(Airport(name=name, lat=lat, lon=lon, is_argentina=(name in ARGENTINA_NAMES)))
         db.session.commit()
     print("DB inicializada y aeropuertos sembrados.")
+
+
+@app.cli.command('autorizar-usuario')
+@click.option('--email', prompt='Email de Google', help='Se guarda en minúsculas.')
+@click.option('--nombre', prompt='Nombre', default='', help='Nombre para mostrar (opcional).')
+@click.option('--nivel', prompt='Nivel (1, 2 o 3)', type=click.IntRange(1, 3), default=1,
+              help='1=mapa/proyecciones/aerolíneas, 2=+precios+admin, 3=+gestionar usuarios.')
+def autorizar_usuario(email, nombre, nivel):
+    """Da de alta (o actualiza) una cuenta autorizada para entrar con Google.
+
+    No pide contraseña -- la identidad la verifica Google en el login; esto sólo agrega el
+    email a la lista blanca con un nivel. Es la única forma de crear el PRIMER nivel 3:
+    correlo una vez desde el Shell de Render con --nivel 3. Los siguientes nivel 3 se
+    pueden dar de alta desde /admin → Usuarios, sin volver a tocar la terminal.
+
+    Ejemplo:
+        flask autorizar-usuario --email francisco@ypf.com --nombre "Francisco Noguera" --nivel 3
+    """
+    email = email.strip().lower()
+    with app.app_context():
+        db.create_all()
+        user = User.query.filter_by(email=email).first()
+        accion = 'actualizada' if user else 'creada'
+        if user is None:
+            user = User(email=email)
+            db.session.add(user)
+        user.nombre = nombre or user.nombre
+        user.nivel = nivel
+        user.is_active = True
+        db.session.commit()
+    print(f"Cuenta {accion}: {email} (nivel={nivel}).")
 
 
 def ensure_tables():
@@ -639,8 +701,8 @@ MODEL_VERSION = 'asignación por ocupación'
 
 @app.route('/')
 def index():
-    if not session.get('map_access'):
-        return render_template('map_login.html')
+    if nivel_actual() < 1:
+        return redirect(url_for('login_page'))
     # no-store en map.html: el archivo se edita seguido y un navegador que se quede con la
     # copia vieja hace parecer que el deploy no salió. Pesa poco y solo es el HTML: los datos
     # ya viajan aparte por /api/data.
@@ -650,40 +712,62 @@ def index():
     return resp
 
 
-@app.route('/login', methods=['POST'])
-@limiter.limit("10 per minute")
-def map_login():
-    if _passwords_match(request.form.get('password'), MAP_PASSWORD):
-        session['map_access'] = True
+@app.route('/login')
+def login_page():
+    """Página con el botón "Iniciar sesión con Google". Si ya hay sesión válida, de una
+    vez para adentro -- no tiene sentido mostrarle el botón a alguien que ya entró."""
+    if nivel_actual() >= 1:
         return redirect(url_for('index'))
-    return render_template('map_login.html', error='Clave incorrecta.')
+    return render_template('google_login.html', error=request.args.get('error'))
 
 
-@app.route('/logout')
-def map_logout():
-    session.pop('map_access', None)
-    session.pop('fuel_access', None)
+@app.route('/login/google')
+@limiter.limit("20 per minute")
+def login_google():
+    redirect_uri = url_for('login_google_callback', _external=True)
+    return google_oauth.authorize_redirect(redirect_uri)
+
+
+@app.route('/login/google/callback')
+@limiter.limit("20 per minute")
+def login_google_callback():
+    try:
+        token = google_oauth.authorize_access_token()
+    except Exception:
+        app.logger.exception("Fallo el intercambio de token con Google en /login/google/callback")
+        return redirect(url_for('login_page', error='No se pudo completar el login con Google. Probá de nuevo.'))
+
+    userinfo = token.get('userinfo') or {}
+    email = (userinfo.get('email') or '').strip().lower()
+    email_verificado = userinfo.get('email_verified', False)
+    if not email or not email_verificado:
+        return redirect(url_for('login_page', error='Google no pudo verificar ese email.'))
+
+    user = User.query.filter_by(email=email, is_active=True).first()
+    if user is None:
+        return redirect(url_for(
+            'login_page',
+            error=f'La cuenta {email} no está autorizada. Pedile a un administrador que te dé de alta.'))
+
+    user.last_login_at = datetime.utcnow()
+    db.session.commit()
+    session.clear()
+    session['user_email'] = user.email
+    session['user_nivel'] = user.nivel
+    session['user_nombre'] = user.nombre or user.email
     return redirect(url_for('index'))
 
 
-@app.route('/fuel_login', methods=['POST'])
-@limiter.limit("10 per minute")
-def fuel_login():
-    """Segunda capa de contraseña, independiente de la del mapa (MAP_PASSWORD): gatea
-    específicamente todo lo que sale del Excel de ventas de combustible (panel, hover del
-    mapa, tooltip del desplegable de aeropuerto). No requiere estar logueado como admin."""
-    if not session.get('map_access'):
-        return jsonify({"error": "No autorizado"}), 401
-    if _passwords_match(request.form.get('password'), FUEL_PASSWORD):
-        session['fuel_access'] = True
-        return jsonify({"ok": True})
-    return jsonify({"error": "Contraseña incorrecta"}), 401
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login_page'))
 
 
 @app.route('/api/data')
 @limiter.limit("30 per minute")
 def api_data():
-    if not session.get('map_access'):
+    if nivel_actual() < 1:
         return jsonify({"error": "No autorizado"}), 401
     try:
         hist_routes, hist_airports = get_historical_rows()
@@ -822,7 +906,7 @@ def api_data():
         # Vuelos, despachos y volumen del Excel de combustible (incluidos los aeropuertos que
         # solo existen en el mapa por tener datos de combustible, sin ninguna ruta real de
         # pasajeros) se calculan y envían siempre, sin necesidad de desbloquear.
-        fuel_access = bool(session.get('fuel_access'))
+        fuel_access = nivel_actual() >= 2  # nivel 2+: precios/ingresos de combustible desbloqueados
 
         fuel_sale_airport_names = {row[0] for row in db.session.query(FuelSale.aeropuerto).distinct().all()}
         isolated_airports = sorted(
@@ -935,8 +1019,8 @@ def api_data():
 
 @app.route('/admin', methods=['GET'])
 def admin_page():
-    if not session.get('is_admin'):
-        return render_template('login.html')
+    if nivel_actual() < 2:
+        return redirect(url_for('login_page'))
     logs = UploadLog.query.order_by(UploadLog.uploaded_at.desc()).limit(20).all()
     airline_logs = AirlineUploadLog.query.order_by(AirlineUploadLog.uploaded_at.desc()).limit(20).all()
     fuel_sale_logs = FuelSaleUploadLog.query.order_by(FuelSaleUploadLog.uploaded_at.desc()).limit(20).all()
@@ -952,16 +1036,78 @@ def admin_page():
         'manual_routes': len(manual_routes),
     }
     admin_files = AdminFile.query.order_by(AdminFile.uploaded_at.desc()).all()
+    usuarios = User.query.order_by(User.email.asc()).all() if nivel_actual() >= 3 else []
     return render_template('admin.html', logs=logs, airline_logs=airline_logs, fuel_sale_logs=fuel_sale_logs,
                             stats=stats, manual_routes=manual_routes, airports=airports, aircraft=aircraft,
-                            flota_nombres=flota_nombres, admin_files=admin_files)
+                            flota_nombres=flota_nombres, admin_files=admin_files, usuarios=usuarios,
+                            nivel_actual=nivel_actual(), usuario_actual=session.get('user_email'))
+
+
+# ---------- Admin: gestión de usuarios (solo nivel 3) ----------
+
+@app.route('/admin/usuarios/crear', methods=['POST'])
+@limiter.limit("20 per hour")
+def admin_usuarios_crear():
+    if nivel_actual() < 3:
+        return jsonify({"error": "No autorizado"}), 401
+    email = (request.form.get('email') or '').strip().lower()
+    nombre = (request.form.get('nombre') or '').strip()
+    try:
+        nivel = int(request.form.get('nivel', ''))
+    except ValueError:
+        return jsonify({"error": "Nivel inválido."}), 400
+    if not email or '@' not in email:
+        return jsonify({"error": "Email inválido."}), 400
+    if nivel not in (1, 2, 3):
+        return jsonify({"error": "El nivel debe ser 1, 2 o 3."}), 400
+    if User.query.filter_by(email=email).first() is not None:
+        return jsonify({"error": f"Ya existe una cuenta con el email {email}."}), 400
+    user = User(email=email, nombre=nombre or None, nivel=nivel, is_active=True)
+    db.session.add(user)
+    db.session.commit()
+    return jsonify({"ok": True, "id": user.id})
+
+
+@app.route('/admin/usuarios/<int:user_id>/nivel', methods=['POST'])
+@limiter.limit("30 per hour")
+def admin_usuarios_nivel(user_id):
+    if nivel_actual() < 3:
+        return jsonify({"error": "No autorizado"}), 401
+    user = User.query.get_or_404(user_id)
+    try:
+        nuevo_nivel = int(request.form.get('nivel', ''))
+    except ValueError:
+        return jsonify({"error": "Nivel inválido."}), 400
+    if nuevo_nivel not in (1, 2, 3):
+        return jsonify({"error": "El nivel debe ser 1, 2 o 3."}), 400
+    if user.email == session.get('user_email') and nuevo_nivel < 3:
+        return jsonify({"error": "No podés bajarte tu propio nivel por debajo de 3 mientras "
+                                 "estás logueado con esta cuenta (te quedarías sin poder "
+                                 "administrar usuarios)."}), 400
+    user.nivel = nuevo_nivel
+    db.session.commit()
+    return jsonify({"ok": True})
+
+
+@app.route('/admin/usuarios/<int:user_id>/toggle_activo', methods=['POST'])
+@limiter.limit("30 per hour")
+def admin_usuarios_toggle_activo(user_id):
+    if nivel_actual() < 3:
+        return jsonify({"error": "No autorizado"}), 401
+    user = User.query.get_or_404(user_id)
+    if user.is_active and user.email == session.get('user_email'):
+        return jsonify({"error": "No podés desactivar tu propia cuenta mientras estás "
+                                 "logueado con ella (te quedarías afuera)."}), 400
+    user.is_active = not user.is_active
+    db.session.commit()
+    return jsonify({"ok": True, "is_active": user.is_active})
 
 
 # ---------- Admin: Geocode (Airport coordinates) CRUD ----------
 
 @app.route('/admin/airports', methods=['GET'])
 def list_airports():
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
     airports = Airport.query.order_by(Airport.name.asc()).all()
     return jsonify([{"name": a.name, "lat": a.lat, "lon": a.lon, "is_argentina": a.is_argentina} for a in airports])
@@ -969,7 +1115,7 @@ def list_airports():
 
 @app.route('/admin/airports/add', methods=['POST'])
 def add_airport():
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
 
     data = request.get_json(silent=True) or request.form
@@ -999,7 +1145,7 @@ def add_airport():
 
 @app.route('/admin/airports/update', methods=['POST'])
 def update_airport():
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
 
     data = request.get_json(silent=True) or request.form
@@ -1050,7 +1196,7 @@ def update_airport():
 
 @app.route('/admin/airports/delete', methods=['POST'])
 def delete_airport():
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
 
     data = request.get_json(silent=True) or request.form
@@ -1079,7 +1225,7 @@ def delete_airport():
 
 @app.route('/admin/airport_aliases', methods=['GET'])
 def list_airport_aliases():
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
     aliases = AirportAlias.query.order_by(AirportAlias.alias.asc()).all()
     return jsonify([{"alias": a.alias, "airport_name": a.airport_name} for a in aliases])
@@ -1087,7 +1233,7 @@ def list_airport_aliases():
 
 @app.route('/admin/airport_aliases/add', methods=['POST'])
 def add_airport_alias():
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
 
     data = request.get_json(silent=True) or request.form
@@ -1111,7 +1257,7 @@ def add_airport_alias():
 
 @app.route('/admin/airport_aliases/delete', methods=['POST'])
 def delete_airport_alias():
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
 
     data = request.get_json(silent=True) or request.form
@@ -1133,7 +1279,7 @@ def fuel_sales_unmatched():
     """Nombres de AEROPUERTO ya guardados en FuelSale que no matchean (ni exacto, ni
     normalizado, ni por alias) con ningún Airport.name -- esos vuelos no van a aparecer
     en el mapa hasta agregar un alias o cargar el aeropuerto en 'Aeropuertos conocidos'."""
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
 
     known_norm = {_normalize_airport_name(a.name) for a in Airport.query.all()}
@@ -1154,7 +1300,7 @@ def reprocess_fuel_sales_airports():
     porque esas filas quedaron guardadas con el nombre crudo del Excel. Si al renombrar
     dos filas terminan compartiendo la misma clave (vuelo+aeropuerto+llaa+año+mes), se
     fusionan sumando cant_vuelos/volumen/ingreso en vez de duplicar."""
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
 
     known_airports_norm = {_normalize_airport_name(a.name): a.name for a in Airport.query.all()}
@@ -1189,7 +1335,7 @@ def reprocess_fuel_sales_airports():
 
 @app.route('/admin/aircraft', methods=['GET'])
 def list_aircraft():
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
     aircraft = Aircraft.query.order_by(Aircraft.name.asc()).all()
     return jsonify([{
@@ -1255,7 +1401,7 @@ def _validate_aircraft_fields(data):
 
 @app.route('/admin/aircraft/add', methods=['POST'])
 def add_aircraft():
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
 
     data = request.get_json(silent=True) or request.form
@@ -1277,7 +1423,7 @@ def add_aircraft():
 
 @app.route('/admin/aircraft/update', methods=['POST'])
 def update_aircraft():
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
 
     data = request.get_json(silent=True) or request.form
@@ -1317,7 +1463,7 @@ def update_aircraft():
 
 @app.route('/admin/aircraft/delete', methods=['POST'])
 def delete_aircraft():
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
 
     data = request.get_json(silent=True) or request.form
@@ -1342,7 +1488,7 @@ def delete_aircraft():
 @app.route('/upload_manual', methods=['POST'])
 @limiter.limit("10 per minute")
 def upload_manual():
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
 
     f = request.files.get('file')
@@ -1356,7 +1502,7 @@ def upload_manual():
 @app.route('/upload_manual_single', methods=['POST'])
 @limiter.limit("20 per minute")
 def upload_manual_single():
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
 
     data = request.get_json(silent=True) or request.form
@@ -1409,7 +1555,7 @@ def upload_manual_single():
 
 @app.route('/manual_routes/delete/<int:route_id>', methods=['POST'])
 def delete_manual_route(route_id):
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
     mr = ManualRoute.query.get_or_404(route_id)
     db.session.delete(mr)
@@ -1417,24 +1563,10 @@ def delete_manual_route(route_id):
     return jsonify({"deleted": route_id})
 
 
-@app.route('/admin/login', methods=['POST'])
-@limiter.limit("5 per minute; 20 per hour")
-def admin_login():
-    if _passwords_match(request.form.get('password'), ADMIN_PASSWORD):
-        session['is_admin'] = True
-    return redirect(url_for('admin_page'))
-
-
-@app.route('/admin/logout')
-def admin_logout():
-    session.pop('is_admin', None)
-    return redirect(url_for('admin_page'))
-
-
 @app.route('/upload', methods=['POST'])
 @limiter.limit("10 per minute")
 def upload():
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
 
     files = request.files.getlist('files')
@@ -1492,7 +1624,7 @@ def upload():
 @app.route('/upload_aerolineas', methods=['POST'])
 @limiter.limit("10 per minute")
 def upload_aerolineas():
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
 
     try:
@@ -1583,8 +1715,8 @@ def upload_aerolineas():
 
 @app.route('/aerolineas')
 def aerolineas_page():
-    if not (session.get('map_access') or session.get('is_admin')):
-        return render_template('map_login.html')
+    if nivel_actual() < 1:
+        return redirect(url_for('login_page'))
 
     meses_disponibles = (
         db.session.query(AirlineMonthly.anio, AirlineMonthly.mes)
@@ -1636,7 +1768,7 @@ def admin_fuel_sales_borrar_todo():
     Requiere admin Y una confirmación explícita en el body (`confirmar: "BORRAR"`) — no
     alcanza con estar logueado, porque es irreversible y afecta a toda la base, no a un
     archivo puntual."""
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
     try:
         data = request.get_json(silent=True) or {}
@@ -1669,7 +1801,7 @@ def admin_archivos_subir():
     solo para poder bajarlo después desde otra máquina. Se guarda en Postgres (Neon) y no en
     el disco de Render, porque el filesystem del free tier es efímero y no sobrevive a un
     redeploy o restart."""
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
 
     files = request.files.getlist('files')
@@ -1699,7 +1831,7 @@ def admin_archivos_subir():
 
 @app.route('/admin/archivos/<int:file_id>/descargar')
 def admin_archivos_descargar(file_id):
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
     af = AdminFile.query.get_or_404(file_id)
     return send_file(
@@ -1713,7 +1845,7 @@ def admin_archivos_descargar(file_id):
 @app.route('/admin/archivos/<int:file_id>/borrar', methods=['POST'])
 @limiter.limit("20 per minute")
 def admin_archivos_borrar(file_id):
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
     af = AdminFile.query.get_or_404(file_id)
     db.session.delete(af)
@@ -1726,7 +1858,7 @@ def admin_archivos_borrar(file_id):
 def admin_archivos_borrar_todo():
     """Borra TODOS los archivos guardados en AdminFile. Pensado para uso momentáneo: subís,
     bajás cuando necesitás, y limpiás Neon de una para no dejar acumulando espacio."""
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
     data = request.get_json(silent=True) or {}
     if data.get('confirmar') != 'BORRAR':
@@ -1739,7 +1871,7 @@ def admin_archivos_borrar_todo():
 @app.route('/upload_fuel_sales', methods=['POST'])
 @limiter.limit("10 per minute")
 def upload_fuel_sales():
-    if not session.get('is_admin'):
+    if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
 
     try:
@@ -1846,7 +1978,7 @@ def api_fuel_sales_diagnostico():
     julio" son indistinguibles entre "no se subió nada de julio" (nada que arreglar acá) y
     "se subió pero bajo un período o nombre distinto" (se corrige sin volver a subir el
     archivo)."""
-    if not session.get('map_access'):
+    if nivel_actual() < 1:
         return jsonify({"error": "No autorizado"}), 401
 
     anio = request.args.get('anio', type=int)
@@ -1895,12 +2027,12 @@ def api_fuel_sales_diagnostico():
 @app.route('/api/fuel_sales')
 @limiter.limit("30 per minute")
 def api_fuel_sales():
-    if not session.get('map_access'):
+    if nivel_actual() < 1:
         return jsonify({"error": "No autorizado"}), 401
 
     # Segunda capa de contraseña: solo protege ingreso/precio (los USD). Vuelos, despachos y
     # volumen se devuelven siempre, sin necesidad de desbloquear.
-    fuel_access = bool(session.get('fuel_access'))
+    fuel_access = nivel_actual() >= 2  # nivel 2+: precios/ingresos de combustible desbloqueados
 
     aeropuerto = (request.args.get('aeropuerto') or '').strip()
     if not aeropuerto:
@@ -2147,7 +2279,7 @@ def api_consumo_nacional():
     flota), así que contrastarlo contra el despacho real es la única forma de saber cuánto
     se le está errando. Ojo con la interpretación: FuelSale son los despachos de YPF, no el
     total del mercado argentino, así que el cociente es un share, no un error."""
-    if not session.get('map_access'):
+    if nivel_actual() < 1:
         return jsonify({"error": "No autorizado"}), 401
 
     aeropuerto = (request.args.get('aeropuerto') or '').strip() or None
@@ -2270,7 +2402,7 @@ def api_consumo_nacional():
 def api_estimar_ruta():
     """Estima avión y consumo de una ruta arbitraria, para el previsualizador de la
     pestaña de proyecciones. No guarda nada."""
-    if not session.get('map_access'):
+    if nivel_actual() < 1:
         return jsonify({"error": "No autorizado"}), 401
 
     origin = (request.args.get('origin') or '').strip()
@@ -2360,7 +2492,7 @@ def api_deploy_status():
     """Diagnóstico de deploy, pensado para pegar la URL en el navegador y ver en 2 segundos
     qué archivos del modelo llegaron al servidor, sin entrar al dashboard de Render a leer
     logs. Requiere estar logueado al mapa, nada más — no expone datos sensibles."""
-    if not session.get('map_access'):
+    if nivel_actual() < 1:
         return jsonify({"error": "No autorizado"}), 401
 
     base = os.path.dirname(os.path.abspath(__file__))
@@ -2396,8 +2528,8 @@ def api_deploy_status():
 
 @app.route('/proyecciones')
 def proyecciones_page():
-    if not session.get('map_access'):
-        return render_template('map_login.html')
+    if nivel_actual() < 1:
+        return redirect(url_for('login_page'))
     try:
         return render_template('proyecciones.html')
     except Exception as e:
@@ -2428,7 +2560,7 @@ def proyecciones_page():
 @app.route('/api/proyeccion/escenarios')
 @limiter.limit("60 per minute")
 def api_proyeccion_escenarios():
-    if not session.get('map_access'):
+    if nivel_actual() < 1:
         return jsonify({"error": "No autorizado"}), 401
     nombres = sorted({e for (e,) in db.session.query(ProyeccionRuta.escenario).distinct()} |
                      {c.escenario for c in ProyeccionConfig.query.all()} | {'Base'})
@@ -2438,7 +2570,7 @@ def api_proyeccion_escenarios():
 @app.route('/api/proyeccion/rutas')
 @limiter.limit("60 per minute")
 def api_proyeccion_rutas():
-    if not session.get('map_access'):
+    if nivel_actual() < 1:
         return jsonify({"error": "No autorizado"}), 401
     escenario = (request.args.get('escenario') or 'Base').strip() or 'Base'
     cfg = _proyeccion_config(escenario)
@@ -2574,7 +2706,7 @@ def _parse_ruta_proyeccion_payload(data):
 def api_proyeccion_ruta_guardar():
     """Alta o edición de una ruta proyectada. Alcanza con tener acceso al mapa: es un
     escenario hipotético, no toca ningún dato real de ANAC ni de combustible."""
-    if not session.get('map_access'):
+    if nivel_actual() < 1:
         return jsonify({"error": "No autorizado"}), 401
     try:
         data = request.get_json(silent=True) or {}
@@ -2604,7 +2736,7 @@ def api_proyeccion_ruta_guardar():
 @app.route('/api/proyeccion/rutas/<int:rid>/borrar', methods=['POST'])
 @limiter.limit("30 per minute")
 def api_proyeccion_ruta_borrar(rid):
-    if not session.get('map_access'):
+    if nivel_actual() < 1:
         return jsonify({"error": "No autorizado"}), 401
     try:
         r = ProyeccionRuta.query.get(rid)
@@ -2673,7 +2805,7 @@ def _parse_exclusion_payload(data):
 @app.route('/api/proyeccion/exclusiones')
 @limiter.limit("60 per minute")
 def api_proyeccion_exclusiones():
-    if not session.get('map_access'):
+    if nivel_actual() < 1:
         return jsonify({"error": "No autorizado"}), 401
     exclusiones = ProyeccionExclusion.query.order_by(
         ProyeccionExclusion.desde_anio, ProyeccionExclusion.desde_mes).all()
@@ -2687,7 +2819,7 @@ def api_proyeccion_exclusion_guardar():
     nivel base. Igual que las rutas del escenario, alcanza con tener acceso al mapa: es una
     corrección sobre cómo se LEE el historial real, no un dato nuevo, y cualquiera que esté
     armando una proyección necesita poder ajustarla."""
-    if not session.get('map_access'):
+    if nivel_actual() < 1:
         return jsonify({"error": "No autorizado"}), 401
     try:
         data = request.get_json(silent=True) or {}
@@ -2717,7 +2849,7 @@ def api_proyeccion_exclusion_guardar():
 @app.route('/api/proyeccion/exclusiones/<int:eid>/borrar', methods=['POST'])
 @limiter.limit("30 per minute")
 def api_proyeccion_exclusion_borrar(eid):
-    if not session.get('map_access'):
+    if nivel_actual() < 1:
         return jsonify({"error": "No autorizado"}), 401
     try:
         ex = ProyeccionExclusion.query.get(eid)
@@ -2798,7 +2930,7 @@ def api_cobertura_anac():
     Sirve para responder "¿por qué la estacionalidad saltea 2023?" sin tener que adivinar:
     un año se saltea solo si tiene menos de 12 meses, y acá se ve exactamente cuáles faltan
     y si el año viene del histórico embebido o de un Excel subido al panel de admin."""
-    if not session.get('map_access'):
+    if nivel_actual() < 1:
         return jsonify({"error": "No autorizado"}), 401
     try:
         hist_routes, _ = get_historical_rows()
@@ -2919,7 +3051,7 @@ def parse_tipo_cambio_excel(file_obj):
 @app.route('/api/proyeccion/fx')
 @limiter.limit("60 per minute")
 def api_proyeccion_fx():
-    if not session.get('map_access'):
+    if nivel_actual() < 1:
         return jsonify({"error": "No autorizado"}), 401
     filas = TipoCambioMensual.query.order_by(TipoCambioMensual.anio, TipoCambioMensual.mes).all()
     return jsonify({"fx": [{'anio': f.anio, 'mes': f.mes, 'valor': f.valor} for f in filas]})
@@ -2930,7 +3062,7 @@ def api_proyeccion_fx():
 def api_proyeccion_fx_upload():
     """Carga la planilla de tipo de cambio. Igual que el mercado real, va acá y no en
     /admin porque alimenta directamente la estimación de elasticidad de la proyección."""
-    if not session.get('map_access'):
+    if nivel_actual() < 1:
         return jsonify({"error": "No autorizado"}), 401
     try:
         f = request.files.get('file')
@@ -3184,7 +3316,7 @@ def parse_dolar_blue_csv(file_obj):
 @app.route('/api/proyeccion/indices')
 @limiter.limit("60 per minute")
 def api_proyeccion_indices():
-    if not session.get('map_access'):
+    if nivel_actual() < 1:
         return jsonify({"error": "No autorizado"}), 401
     categoria = (request.args.get('categoria') or '').strip() or None
     q = IndiceEconomico.query
@@ -3205,7 +3337,7 @@ def api_proyeccion_indices_upload():
     """Carga un CSV estilo INDEC (salarios, o cualquier otro con el mismo formato:
     'periodo;col1;col2;...'). La categoría viene por parámetro para poder distinguir
     salarios de otras series que se carguen más adelante (ej. IPC)."""
-    if not session.get('map_access'):
+    if nivel_actual() < 1:
         return jsonify({"error": "No autorizado"}), 401
     try:
         categoria = (request.form.get('categoria') or '').strip()
@@ -3259,7 +3391,7 @@ def api_proyeccion_indices_upload():
 @app.route('/api/proyeccion/mercado')
 @limiter.limit("60 per minute")
 def api_proyeccion_mercado():
-    if not session.get('map_access'):
+    if nivel_actual() < 1:
         return jsonify({"error": "No autorizado"}), 401
     filas = MercadoMensual.query.order_by(MercadoMensual.anio, MercadoMensual.mes).all()
     return jsonify({"mercado": [{
@@ -3275,7 +3407,7 @@ def api_proyeccion_mercado():
 def api_proyeccion_mercado_upload():
     """Carga la planilla de mercado real por empresa. Va acá y no en /admin porque es el dato
     que cierra el circuito de la proyección: sin él, el desvío del modelo no se puede medir."""
-    if not session.get('map_access'):
+    if nivel_actual() < 1:
         return jsonify({"error": "No autorizado"}), 401
     try:
         f = request.files.get('file')
@@ -3318,7 +3450,7 @@ def api_proyeccion_mercado_upload():
 @app.route('/api/proyeccion/config', methods=['POST'])
 @limiter.limit("30 per minute")
 def api_proyeccion_config():
-    if not session.get('map_access'):
+    if nivel_actual() < 1:
         return jsonify({"error": "No autorizado"}), 401
     try:
         data = request.get_json(silent=True) or {}
