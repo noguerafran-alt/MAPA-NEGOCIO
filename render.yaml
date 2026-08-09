@@ -10,11 +10,13 @@ services:
         value: 3.11.9
       - key: DATABASE_URL
         sync: false
-      - key: ADMIN_PASSWORD
-        generateValue: true
-      - key: MAP_PASSWORD
-        generateValue: true
-      - key: FUEL_PASSWORD
-        sync: false  # se administra a mano en el dashboard de Render, no la pisa el blueprint
+      - key: GOOGLE_CLIENT_ID
+        sync: false  # se carga a mano en el dashboard de Render (viene de Google Cloud Console)
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false  # idem, nunca se commitea
       - key: SECRET_KEY
         generateValue: true
+      # ADMIN_PASSWORD, MAP_PASSWORD y FUEL_PASSWORD ya NO se usan: el acceso pasó a ser
+      # por cuenta de Google (modelo User, con nivel 1/2/3). Si venís de una versión
+      # anterior con esas variables, podés borrarlas del dashboard de Render una vez que
+      # hayas creado al menos un nivel 3 con `flask autorizar-usuario` (ver README).
