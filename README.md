@@ -6,20 +6,47 @@ ruta, a partir de las planillas "series históricas" de ANAC.
 
 ## Uso
 
-- `/` — el mapa público.
-- `/admin` — panel para subir nuevos Excel de ANAC (protegido por contraseña,
-  variable de entorno `ADMIN_PASSWORD`).
+- `/` — el mapa, `/proyecciones` y `/aerolineas` — requieren estar logueado
+  con una cuenta de Google autorizada (nivel 1 o más).
+- `/admin` — panel de administración; requiere nivel 2 o más. Los
+  precios/ingresos de combustible también se desbloquean recién en nivel 2.
+- `/admin` → sección **Usuarios** — dar de alta o editar cuentas; sólo
+  visible y usable para nivel 3.
+
+No hay contraseñas: la identidad la verifica Google, y la app sólo decide
+qué nivel tiene cada email según una lista blanca (tabla `User`). Un email
+que no esté en esa lista puede loguearse con Google igual, pero la app lo
+rechaza con "cuenta no autorizada".
+
+## Configurar Google OAuth (una sola vez)
+
+1. En [Google Cloud Console](https://console.cloud.google.com/apis/credentials),
+   creá un **OAuth 2.0 Client ID** de tipo "Aplicación web".
+2. En **Authorized redirect URIs**, agregá:
+   `https://<tu-dominio-de-render>.onrender.com/login/google/callback`
+   (y `http://localhost:5000/login/google/callback` si vas a probar en local).
+3. Copiá el **Client ID** y el **Client Secret** — van en las variables de
+   entorno `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET` (paso 3 de Deploy).
 
 ## Deploy en Render
 
 1. Subí este repo a GitHub.
 2. En Render: **New + → Blueprint**, elegí este repo. `render.yaml` crea
    automáticamente la base Postgres y el servicio web.
-3. Una vez desplegado, andá a la pestaña **Environment** del servicio web y
-   anotá el valor generado de `ADMIN_PASSWORD` (Render lo genera solo por
-   seguridad) — con eso entrás a `/admin`. Podés cambiarlo ahí mismo.
-4. Entrá a `/admin`, subí los `.xlsx` de ANAC (hoja "OUT"), y listo — el mapa
-   se actualiza solo.
+3. En la pestaña **Environment** del servicio web, cargá a mano
+   `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET` (salen del paso anterior).
+4. **Autorizá tu propia cuenta** desde el Shell de Render (pestaña Shell del
+   servicio, o `render ssh` desde tu máquina):
+   ```
+   flask autorizar-usuario --email vos@ypf.com --nombre "Tu Nombre" --nivel 3
+   ```
+   Es el único paso manual: de ahí en adelante, se pueden autorizar más
+   cuentas desde `/admin` → **Usuarios**, sin volver a tocar la terminal.
+5. Entrá a `/login`, iniciá sesión con esa cuenta de Google, y listo.
+
+Si venís de una versión anterior con `ADMIN_PASSWORD`/`MAP_PASSWORD`/
+`FUEL_PASSWORD`: esas tres variables ya no se usan. Corré el paso 4 antes de
+que se pierda el acceso, y después podés borrarlas del dashboard de Render.
 
 ## Actualizar datos más adelante
 
