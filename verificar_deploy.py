@@ -20,7 +20,7 @@ with app.app_context():
 
 c = app.test_client()
 with c.session_transaction() as s:
-    s['map_access'] = True
+    s['user_email'] = 'test@ypf.com'; s['user_nivel'] = 1
 
 fallos = []
 
