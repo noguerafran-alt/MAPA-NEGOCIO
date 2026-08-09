@@ -52,6 +52,24 @@
   .pill.real { border-color: #2f6b45; color: #8fe3a2; }
   .pill.neg { border-color: #7a3244; color: #ff9a9a; }
   #chart { width: 100%; height: 520px; }
+
+  /* Panel desplegable "¿Cómo se calcula esto?", uno por estimador */
+  details.explicacion { margin-top: 10px; border: 1px solid #2a3358; border-radius: 8px;
+                        background: #0d1330; }
+  details.explicacion summary { cursor: pointer; padding: 8px 12px; font-size: 12.5px;
+                                color: #8fb2ff; list-style: none; user-select: none; }
+  details.explicacion summary::-webkit-details-marker { display: none; }
+  details.explicacion summary::before { content: '▸ '; }
+  details.explicacion[open] summary::before { content: '▾ '; }
+  details.explicacion .contenido { padding: 4px 14px 14px; font-size: 12.5px;
+                                   color: #c8cfe6; line-height: 1.6; }
+  .formula { background: #10162e; border: 1px solid #2a3358; border-radius: 6px;
+            padding: 8px 12px; margin: 8px 0; font-family: 'Cambria Math', Georgia, serif;
+            font-size: 13.5px; color: #e4e8f5; text-align: center; overflow-x: auto; }
+  .glosario { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+  .glosario th, .glosario td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #1e2748; }
+  .glosario th { color: #7d87ab; font-weight: normal; }
+  .glosario td:first-child { font-family: 'Cambria Math', Georgia, serif; color: #8fb2ff; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -142,6 +160,34 @@
     </div>
     <div class="err" id="cfg-msg"></div>
     <div class="note" id="regresion-msg" style="margin-top:6px;"></div>
+
+    <details class="explicacion">
+      <summary>¿Cómo se calcula esto?</summary>
+      <div class="contenido">
+        Regresión log-lineal con estacionalidad por variables mensuales (dummies), sobre los
+        últimos meses (ventana = "Años para la estacionalidad" × 12, mínimo 24):
+        <div class="formula">
+          log y(t) = a + b·t + Σ<sub>m=2</sub><sup>12</sup> γ<sub>m</sub>·D<sub>m</sub>(t) + ε(t)
+        </div>
+        El crecimiento anual que se muestra es <b>g = exp(b·12) − 1</b>: la pendiente
+        <b>b</b> convertida de tasa logarítmica mensual a tasa anual compuesta.
+        <table class="glosario">
+          <tr><th>Símbolo</th><th>Qué es</th></tr>
+          <tr><td>y(t)</td><td>Cabotaje o internacional (m³) del mes t, según qué campo se estima</td></tr>
+          <tr><td>t</td><td>Índice de mes dentro de la ventana (0, 1, 2…)</td></tr>
+          <tr><td>a</td><td>Constante (nivel logarítmico de enero)</td></tr>
+          <tr><td>b</td><td>Pendiente mensual en logaritmos → g = exp(b·12) − 1</td></tr>
+          <tr><td>D<sub>m</sub>(t)</td><td>1 si t cae en el mes calendario m (feb.–dic.), 0 si no</td></tr>
+          <tr><td>γ<sub>m</sub></td><td>Efecto de cada mes; se calcula pero no se usa afuera de esta regresión</td></tr>
+        </table>
+        <b>Importante:</b> esta es la misma familia de estimador (tendencia extrapolada por
+        mínimos cuadrados) que en los backtests de este proyecto dio sistemáticamente peor
+        que el método de nivel base + estacionalidad reciente que usa la proyección — sobre
+        todo si la ventana incluye un salto discontinuo (una devaluación) en el medio. Sirve
+        como referencia de "qué venía pasando"; no es necesariamente el mejor valor para
+        proyectar el futuro.
+      </div>
+    </details>
     <div class="note" style="margin-top:8px;">
       La estacionalidad sale del promedio de cada mes en los últimos años elegidos, normalizada
       para que el promedio anual dé 1. El nivel de partida son los últimos 12 meses con dato
@@ -352,6 +398,30 @@
     <div class="err" id="ffx-msg"></div>
     <div class="note" id="elasticidad-msg" style="margin-top:8px;"></div>
 
+    <details class="explicacion">
+      <summary>¿Cómo se calcula esto?</summary>
+      <div class="contenido">
+        Misma regresión log-lineal con estacionalidad de arriba, con una columna más: el
+        logaritmo del tipo de cambio cargado.
+        <div class="formula">
+          log internacional(t) = a + b·t + Σ<sub>m=2</sub><sup>12</sup> γ<sub>m</sub>·D<sub>m</sub>(t)
+          + c·log(fx(t)) + ε(t)
+        </div>
+        <table class="glosario">
+          <tr><th>Símbolo</th><th>Qué es</th></tr>
+          <tr><td>fx(t)</td><td>El valor cargado en la planilla de tipo de cambio para el mes t</td></tr>
+          <tr><td>c</td><td><b>Elasticidad</b> — el número que se muestra: % de variación en el tráfico por cada 1% de variación en fx</td></tr>
+          <tr><td>b</td><td>Tendencia de fondo, ya neta del efecto cambiario → exp(b·12) − 1</td></tr>
+        </table>
+        <b>Chequeo de confiabilidad — correlación con el tiempo:</b> si el tipo de cambio
+        cargado se movió casi como una recta a lo largo de toda la ventana, esta regresión no
+        puede separar bien "efecto cambiario" de "tendencia", y ambos coeficientes (b y c)
+        quedan poco confiables — es el mismo problema documentado con el índice de salarios
+        nominal. Cuanto más cerca de 0 esa correlación, más genuina es la variación del tipo
+        de cambio (independiente del calendario) y más confiable la elasticidad estimada.
+      </div>
+    </details>
+
     <div class="row" style="align-items:center; gap:8px; margin-top:10px;">
       <span class="note" style="margin:0;">Rango de meses:</span>
       <select id="rango-fx-desde" onchange="aplicarRangoFX()" style="min-width:130px;"></select>
@@ -405,6 +475,34 @@
     </div>
     <div class="err" id="fblue-msg"></div>
     <div class="note" id="elasticidad-blue-msg" style="margin-top:8px;"></div>
+
+    <details class="explicacion">
+      <summary>¿Cómo se calcula esto?</summary>
+      <div class="contenido">
+        Primero se arma el dólar blue <b>real</b> a partir del CSV diario que subiste:
+        <div class="formula">
+          blue_real(t) = blue_nominal(t) · IPC(t₀) / IPC(t)
+        </div>
+        donde <b>t₀</b> es el primer mes de tu archivo que también tenga IPC cargado (si el
+        IPC no llega tan atrás, se corre al primer mes en que ambos se superponen, y se
+        avisa arriba del gráfico). Con esa serie, se corre la misma regresión que con el
+        ITCRM, cambiando qué variable se deflacta:
+        <div class="formula">
+          log internacional(t) = a + b·t + Σ<sub>m=2</sub><sup>12</sup> γ<sub>m</sub>·D<sub>m</sub>(t)
+          + c·log(blue_real(t)) + ε(t)
+        </div>
+        <table class="glosario">
+          <tr><th>Símbolo</th><th>Qué es</th></tr>
+          <tr><td>blue_nominal(t)</td><td>Promedio mensual del CSV diario que subiste</td></tr>
+          <tr><td>IPC(t)</td><td>Nivel General del IPC (categoría "ipc"), no la división elegida para salarios</td></tr>
+          <tr><td>c</td><td><b>Elasticidad</b> — el número que se muestra</td></tr>
+          <tr><td>b</td><td>Tendencia de fondo, ya neta del efecto cambiario → exp(b·12) − 1</td></tr>
+        </table>
+        Mismo chequeo de confiabilidad que el ITCRM y los salarios: cuanto más baja la
+        correlación de log(blue_real) con el tiempo, más genuina —no un artefacto del
+        calendario— es la variación que explica la elasticidad.
+      </div>
+    </details>
 
     <div class="row" style="align-items:center; gap:8px; margin-top:10px;">
       <span class="note" style="margin:0;">Rango de meses:</span>
@@ -497,6 +595,31 @@
     </div>
     <div class="err" id="fsal-msg"></div>
     <div class="note" id="elasticidad-salarios-msg" style="margin-top:8px;"></div>
+
+    <details class="explicacion">
+      <summary>¿Cómo se calcula esto?</summary>
+      <div class="contenido">
+        Misma familia de regresión que el resto, pero para <b>cabotaje</b> (el segmento que
+        más debería reaccionar al salario, no al dólar), y con la sub-serie salarial elegida
+        arriba —deflactada por el IPC si cargaste una división, nominal si no—:
+        <div class="formula">
+          log cabotaje(t) = a + b·t + Σ<sub>m=2</sub><sup>12</sup> γ<sub>m</sub>·D<sub>m</sub>(t)
+          + c·log(salario(t)) + ε(t)
+        </div>
+        <table class="glosario">
+          <tr><th>Símbolo</th><th>Qué es</th></tr>
+          <tr><td>salario(t)</td><td>La sub-serie elegida en "Sub-serie a usar", real si hay IPC o nominal si no</td></tr>
+          <tr><td>c</td><td><b>Elasticidad</b> — el número que se muestra</td></tr>
+          <tr><td>b</td><td>Tendencia de fondo, ya neta del efecto salarial → exp(b·12) − 1</td></tr>
+        </table>
+        La <b>correlación con el tiempo</b> que se muestra arriba junto al resultado es el
+        chequeo de confiabilidad: con el salario <b>nominal</b> suele dar muy alta (cerca de
+        1) porque en un país con inflación acumulada una serie nominal se mueve casi como una
+        recta, indistinguible de la tendencia — ahí la elasticidad y la tendencia estimadas
+        no son confiables. Con el salario <b>real</b> (deflactado por IPC) esa correlación
+        baja bastante, y el resultado se vuelve más creíble.
+      </div>
+    </details>
 
     <div class="row" style="align-items:center; gap:8px; margin-top:10px;">
       <span class="note" style="margin:0;">Rango de meses:</span>
@@ -1825,13 +1948,29 @@ function estimarElasticidadFX() {
   const elasticidad = beta[2];
   const crecimientoAnual = Math.exp(beta[1] * 12) - 1;
 
-  msg.style.color = '#9aa4c7';
+  // Mismo diagnóstico que salarios: qué tan colineal está el tipo de cambio elegido con el
+  // tiempo. Un ITCRM (ya real) suele dar bajo; un dólar nominal sin deflactar, alto.
+  const ts = datos.map(d => mesIndex(d.anio, d.mes) - t0);
+  const logs = datos.map(d => Math.log(d.fx));
+  const mt = ts.reduce((a, b) => a + b, 0) / ts.length;
+  const ml = logs.reduce((a, b) => a + b, 0) / logs.length;
+  const cov = ts.reduce((acc, t, i) => acc + (t - mt) * (logs[i] - ml), 0) / ts.length;
+  const vt = ts.reduce((acc, t) => acc + (t - mt) ** 2, 0) / ts.length;
+  const vl = logs.reduce((acc, l) => acc + (l - ml) ** 2, 0) / logs.length;
+  const correlacionConTiempo = cov / Math.sqrt(vt * vl);
+
+  msg.style.color = Math.abs(correlacionConTiempo) > 0.9 ? '#ffb347' : '#9aa4c7';
   msg.innerHTML = `Sobre ${datos.length} meses: elasticidad del tráfico internacional al ` +
     `tipo de cambio = <b>${elasticidad.toFixed(2)}</b> (cada 1% de suba en el tipo de cambio ` +
     `se asocia con ${elasticidad >= 0 ? 'un' : 'una caída del'} ${Math.abs(elasticidad).toFixed(2)}% ` +
     `${elasticidad >= 0 ? 'de aumento' : ''} en el tráfico). Tendencia de fondo (ya neta del ` +
-    `efecto cambiario): <b>${(crecimientoAnual * 100).toFixed(1)}%</b> anual. ` +
-    `Este número es informativo — no pisa el campo "Crecimiento anual internacional" solo, ` +
+    `efecto cambiario): <b>${(crecimientoAnual * 100).toFixed(1)}%</b> anual.` +
+    `<br>Correlación del tipo de cambio cargado con el tiempo: <b>${correlacionConTiempo.toFixed(2)}</b>` +
+    (Math.abs(correlacionConTiempo) > 0.9
+      ? ' — alta: si es un dólar nominal sin deflactar, se mueve casi como una recta y este ' +
+        'resultado es poco confiable. Con un índice real (ITCRM) esto debería bajar.'
+      : '.') +
+    ` Este número es informativo — no pisa el campo "Crecimiento anual internacional" solo, ` +
     `porque para proyectarlo hacia adelante hace falta ADEMÁS un supuesto de hacia dónde va ` +
     `el tipo de cambio, que es tan una apuesta como cualquier otro supuesto de esta pantalla.`;
 }
@@ -2303,13 +2442,28 @@ function estimarElasticidadDolarBlue() {
   const elasticidad = beta[2];
   const crecimientoAnual = Math.exp(beta[1] * 12) - 1;
 
-  msg.style.color = '#9aa4c7';
+  const ts = datos.map(d => mesIndex(d.anio, d.mes) - t0);
+  const logs = datos.map(d => Math.log(d.fx));
+  const mt = ts.reduce((a, b) => a + b, 0) / ts.length;
+  const ml = logs.reduce((a, b) => a + b, 0) / logs.length;
+  const cov = ts.reduce((acc, t, i) => acc + (t - mt) * (logs[i] - ml), 0) / ts.length;
+  const vt = ts.reduce((acc, t) => acc + (t - mt) ** 2, 0) / ts.length;
+  const vl = logs.reduce((acc, l) => acc + (l - ml) ** 2, 0) / logs.length;
+  const correlacionConTiempo = cov / Math.sqrt(vt * vl);
+
+  msg.style.color = Math.abs(correlacionConTiempo) > 0.9 ? '#ffb347' : '#9aa4c7';
   msg.innerHTML = `Sobre ${datos.length} meses: elasticidad del tráfico internacional al ` +
     `dólar blue real = <b>${elasticidad.toFixed(2)}</b> (cada 1% de suba en el dólar blue ` +
     `real se asocia con ${elasticidad >= 0 ? 'un' : 'una caída del'} ${Math.abs(elasticidad).toFixed(2)}% ` +
     `${elasticidad >= 0 ? 'de aumento' : ''} en el tráfico). Tendencia de fondo (ya neta del ` +
-    `efecto cambiario): <b>${(crecimientoAnual * 100).toFixed(1)}%</b> anual. ` +
-    `Este número es informativo — no pisa el campo "Crecimiento anual internacional" solo, ` +
+    `efecto cambiario): <b>${(crecimientoAnual * 100).toFixed(1)}%</b> anual.` +
+    `<br>Correlación del dólar blue real con el tiempo: <b>${correlacionConTiempo.toFixed(2)}</b>` +
+    (Math.abs(correlacionConTiempo) > 0.9
+      ? ' — alta: tratá este resultado como poco confiable, la variación se parece ' +
+        'demasiado a una simple tendencia.'
+      : ' — baja: la variación del dólar blue real es en buena medida independiente del ' +
+        'calendario, así que este resultado es más confiable que uno con una serie nominal.') +
+    ` Este número es informativo — no pisa el campo "Crecimiento anual internacional" solo, ` +
     `por el mismo motivo que el ITCRM de arriba.`;
 }
 
