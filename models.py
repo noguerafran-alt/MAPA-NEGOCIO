@@ -356,3 +356,25 @@ class AirportAlias(db.Model):
     alias = db.Column(db.String(80), primary_key=True)   # se guarda ya normalizado (mayúsculas, sin tildes)
     airport_name = db.Column(db.String(80), nullable=False)  # debe existir en Airport.name
     created_at = db.Column(db.DateTime, server_default=db.func.now())
+
+
+class User(db.Model):
+    """Cuenta autorizada para entrar con Google OAuth. No hay contraseña acá -- la
+    identidad la verifica Google; esta tabla es la lista blanca de qué emails pueden
+    entrar y con qué nivel. Si un email no está en esta tabla (o está pero is_active es
+    False), el login de Google funciona pero la app lo rechaza igual.
+
+    Niveles (cuanto más alto, más acceso -- son acumulativos, no exclusivos):
+      1 = mapa, proyecciones, aerolíneas. Sin precios/ingresos de combustible.
+      2 = todo lo de nivel 1 + precios/ingresos desbloqueados + panel de admin.
+      3 = todo lo de nivel 2 + puede dar de alta o editar otras cuentas (sección
+          "Usuarios" dentro de /admin).
+    """
+    __tablename__ = 'app_user'
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(255), unique=True, nullable=False)
+    nombre = db.Column(db.String(255))
+    nivel = db.Column(db.Integer, nullable=False, default=1)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, server_default=db.func.now())
+    last_login_at = db.Column(db.DateTime)
