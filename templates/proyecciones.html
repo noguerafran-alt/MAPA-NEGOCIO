@@ -70,6 +70,17 @@
   .glosario th, .glosario td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #1e2748; }
   .glosario th { color: #7d87ab; font-weight: normal; }
   .glosario td:first-child { font-family: 'Cambria Math', Georgia, serif; color: #8fb2ff; white-space: nowrap; }
+
+  /* Calculadora "tendencia + elasticidad × supuesto", una por estimador */
+  .calc-supuesto { display: none; margin-top: 10px; border: 1px solid #2a3358; border-radius: 8px;
+                   background: #10162e; padding: 12px 14px; }
+  .calc-supuesto.show { display: block; }
+  .calc-supuesto .titulo { font-size: 12.5px; color: #8fb2ff; margin-bottom: 8px; }
+  .calc-supuesto .fila { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .calc-supuesto input[type=number] { width: 90px; }
+  .calc-supuesto .resultado { margin-top: 10px; font-size: 12.5px; color: #c8cfe6; line-height: 1.6; }
+  .calc-supuesto .resultado b.valor { color: #8fe3a2; font-size: 14px; }
+  .calc-supuesto button.usar { background: #1d6c4c; }
 </style>
 </head>
 <body>
@@ -422,6 +433,17 @@
       </div>
     </details>
 
+    <div class="calc-supuesto" id="calc-fx-panel">
+      <div class="titulo">Convertir esta elasticidad en un crecimiento anual</div>
+      <div class="fila">
+        <span class="note" style="margin:0;">Si suponés que el tipo de cambio sube (o baja, con signo negativo)</span>
+        <input type="number" id="calc-fx-supuesto" value="0" step="1">
+        <span class="note" style="margin:0;">% en los próximos 12 meses:</span>
+        <button type="button" onclick="calcularConSupuesto('fx')">Calcular</button>
+      </div>
+      <div class="resultado" id="calc-fx-resultado"></div>
+    </div>
+
     <div class="row" style="align-items:center; gap:8px; margin-top:10px;">
       <span class="note" style="margin:0;">Rango de meses:</span>
       <select id="rango-fx-desde" onchange="aplicarRangoFX()" style="min-width:130px;"></select>
@@ -503,6 +525,17 @@
         calendario— es la variación que explica la elasticidad.
       </div>
     </details>
+
+    <div class="calc-supuesto" id="calc-blue-panel">
+      <div class="titulo">Convertir esta elasticidad en un crecimiento anual</div>
+      <div class="fila">
+        <span class="note" style="margin:0;">Si suponés que el dólar blue real sube (o baja, con signo negativo)</span>
+        <input type="number" id="calc-blue-supuesto" value="0" step="1">
+        <span class="note" style="margin:0;">% en los próximos 12 meses:</span>
+        <button type="button" onclick="calcularConSupuesto('blue')">Calcular</button>
+      </div>
+      <div class="resultado" id="calc-blue-resultado"></div>
+    </div>
 
     <div class="row" style="align-items:center; gap:8px; margin-top:10px;">
       <span class="note" style="margin:0;">Rango de meses:</span>
@@ -620,6 +653,17 @@
         baja bastante, y el resultado se vuelve más creíble.
       </div>
     </details>
+
+    <div class="calc-supuesto" id="calc-sal-panel">
+      <div class="titulo">Convertir esta elasticidad en un crecimiento anual</div>
+      <div class="fila">
+        <span class="note" style="margin:0;">Si suponés que el salario elegido sube (o baja, con signo negativo)</span>
+        <input type="number" id="calc-sal-supuesto" value="0" step="1">
+        <span class="note" style="margin:0;">% en los próximos 12 meses:</span>
+        <button type="button" onclick="calcularConSupuesto('sal')">Calcular</button>
+      </div>
+      <div class="resultado" id="calc-sal-resultado"></div>
+    </div>
 
     <div class="row" style="align-items:center; gap:8px; margin-top:10px;">
       <span class="note" style="margin:0;">Rango de meses:</span>
@@ -1889,6 +1933,75 @@ function dibujarTablaFX() {
   }).join('');
 }
 
+// ---------------------------------------------------------------- calculadora de crecimiento
+// "tendencia de fondo + elasticidad × supuesto", compartida por los tres estimadores de
+// elasticidad (FX, dólar blue, salarios). El modelo detrás es el mismo log-lineal de cada
+// estimador: log y = a + b·t + c·log(x) + estacionalidad. Si además de la tendencia pura
+// (g = exp(b·12) − 1) se supone que la variable x va a variar un cierto % en el año, el
+// crecimiento total esperado de y es:
+//
+//   crecimiento_total = (1 + g) × (1 + supuesto)^elasticidad − 1
+//
+// (surge de sumar, en logaritmos, la tendencia de fondo más el aporte de la variable
+// —c·log(1+supuesto)— y volver a la escala normal con exp). Con supuesto = 0 da exactamente
+// la tendencia de fondo sola, que es el caso que ya se podía usar sin esta calculadora.
+let ULTIMOS_ESTIMADORES = {};  // 'fx' | 'blue' | 'sal' -> { elasticidad, tendencia, variable, campoDestino, ultimoResultado }
+
+function mostrarCalculadoraSupuesto(clave, elasticidad, tendencia, variable, campoDestino) {
+  ULTIMOS_ESTIMADORES[clave] = { elasticidad, tendencia, variable, campoDestino, ultimoResultado: null };
+  const panel = document.getElementById(`calc-${clave}-panel`);
+  const etiquetaFila = panel.querySelector('.fila .note');
+  if (etiquetaFila) {
+    etiquetaFila.textContent = `Si suponés que ${variable} sube (o baja, con signo negativo)`;
+  }
+  document.getElementById(`calc-${clave}-resultado`).innerHTML = '';
+  panel.classList.add('show');
+}
+
+function calcularConSupuesto(clave) {
+  const est = ULTIMOS_ESTIMADORES[clave];
+  const resultado = document.getElementById(`calc-${clave}-resultado`);
+  if (!est) { resultado.textContent = 'Corré "Estimar elasticidad" primero.'; return; }
+
+  const input = document.getElementById(`calc-${clave}-supuesto`);
+  const supuestoPct = parseFloat(input.value);
+  if (Number.isNaN(supuestoPct)) { resultado.textContent = 'Ingresá un número.'; return; }
+
+  const supuestoFrac = supuestoPct / 100;
+  if (supuestoFrac <= -1) {
+    resultado.textContent = 'El supuesto no puede ser -100% o menos (implicaría que la variable llega a cero o se vuelve negativa).';
+    return;
+  }
+
+  const factorVariable = Math.pow(1 + supuestoFrac, est.elasticidad);
+  const crecimientoTotal = (1 + est.tendencia) * factorVariable - 1;
+  est.ultimoResultado = crecimientoTotal;
+
+  const campoLabel = est.campoDestino === 'f-gcab' ? 'cabotaje' : 'internacional';
+  const signoTendencia = est.tendencia >= 0 ? '+' : '−';
+  const signoSupuesto = supuestoFrac >= 0 ? '+' : '−';
+  resultado.innerHTML =
+    `(1 ${signoTendencia} ${Math.abs(est.tendencia * 100).toFixed(1)}%) · ` +
+    `(1 ${signoSupuesto} ${Math.abs(supuestoPct).toFixed(1)}%)<sup>${est.elasticidad.toFixed(2)}</sup> ` +
+    `− 1 = <b class="valor">${crecimientoTotal >= 0 ? '+' : ''}${(crecimientoTotal * 100).toFixed(1)}%</b> ` +
+    `anual para ${campoLabel}` +
+    `<div class="fila" style="margin-top:8px;">` +
+    `<button type="button" class="usar" onclick="usarSupuestoEnCampo('${clave}')">` +
+    `Usar este valor en "Crecimiento anual ${campoLabel}"</button></div>`;
+}
+
+function usarSupuestoEnCampo(clave) {
+  const est = ULTIMOS_ESTIMADORES[clave];
+  if (!est || est.ultimoResultado == null) return;
+  const campo = document.getElementById(est.campoDestino);
+  campo.value = (est.ultimoResultado * 100).toFixed(1);
+  campo.style.background = '#1d6c4c';
+  setTimeout(() => {
+    campo.style.transition = 'background 1.2s';
+    campo.style.background = '';
+  }, 50);
+}
+
 // Ajusta log(internacional) = a + b·tiempo + c·log(tipo_de_cambio) + estacionalidad, por
 // mínimos cuadrados, sobre los meses donde SERIE y FX se superponen. El coeficiente c es
 // la elasticidad: cuánto varía el tráfico internacional por cada 1% de variación del tipo
@@ -1899,6 +2012,7 @@ function dibujarTablaFX() {
 // número con la ruta puesta, no asumirlo.
 function estimarElasticidadFX() {
   const msg = document.getElementById('elasticidad-msg');
+  document.getElementById('calc-fx-panel').classList.remove('show');
   if (FX.length < 24) {
     msg.style.color = '#ff9a9a';
     msg.textContent = 'Hacen falta al menos 24 meses de tipo de cambio cargados para poder ' +
@@ -1973,6 +2087,8 @@ function estimarElasticidadFX() {
     ` Este número es informativo — no pisa el campo "Crecimiento anual internacional" solo, ` +
     `porque para proyectarlo hacia adelante hace falta ADEMÁS un supuesto de hacia dónde va ` +
     `el tipo de cambio, que es tan una apuesta como cualquier otro supuesto de esta pantalla.`;
+
+  mostrarCalculadoraSupuesto('fx', elasticidad, crecimientoAnual, 'tipo de cambio', 'f-gintl');
 }
 
 // ---------------------------------------------------------------- índice salarial
@@ -2387,6 +2503,7 @@ async function subirDolarBlue() {
 
 function estimarElasticidadDolarBlue() {
   const msg = document.getElementById('elasticidad-blue-msg');
+  document.getElementById('calc-blue-panel').classList.remove('show');
   const { serie, motivo } = calcularDolarBlueReal();
   if (!serie) {
     msg.style.color = '#ff9a9a';
@@ -2465,6 +2582,8 @@ function estimarElasticidadDolarBlue() {
         'calendario, así que este resultado es más confiable que uno con una serie nominal.') +
     ` Este número es informativo — no pisa el campo "Crecimiento anual internacional" solo, ` +
     `por el mismo motivo que el ITCRM de arriba.`;
+
+  mostrarCalculadoraSupuesto('blue', elasticidad, crecimientoAnual, 'dólar blue real', 'f-gintl');
 }
 
 function serieSalarialElegida() {
@@ -2495,6 +2614,7 @@ function dibujarTablaSalarios() {
 // salario es lo que mueve el viaje interno, el tipo de cambio pega más sobre el internacional.
 function estimarElasticidadSalarios() {
   const msg = document.getElementById('elasticidad-salarios-msg');
+  document.getElementById('calc-sal-panel').classList.remove('show');
   const serie = serieSalarialElegida();
   if (serie.length < 24) {
     msg.style.color = '#ff9a9a';
@@ -2570,6 +2690,9 @@ function estimarElasticidadSalarios() {
     ` Este número es informativo — no pisa el campo "Crecimiento anual cabotaje" solo, ` +
     `porque para proyectarlo hacia adelante hace falta además un supuesto de hacia dónde va ` +
     `el salario real.`;
+
+  const nombreSerie = document.getElementById('fsal-serie').selectedOptions[0].text;
+  mostrarCalculadoraSupuesto('sal', elasticidad, crecimientoAnual, nombreSerie, 'f-gcab');
 }
 
 async function guardarConfig() {
