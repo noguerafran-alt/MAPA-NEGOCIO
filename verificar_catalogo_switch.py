@@ -13,7 +13,7 @@ os.chdir(_AQUI)
 if os.path.exists('/tmp/verif3.db'):
     os.remove('/tmp/verif3.db')
 
-from app import app, ensure_tables, ADMIN_PASSWORD  # noqa
+from app import app, ensure_tables  # noqa
 from models import Aircraft  # noqa
 import avion_model as am  # noqa
 
@@ -51,7 +51,7 @@ check('Cantidad de filas no cambió en el segundo arranque', n_antes == n_despue
 
 print('\n--- La sincronización no pisa ediciones del admin')
 with c.session_transaction() as s:
-    s['is_admin'] = True
+    s['user_email'] = 'test@ypf.com'; s['user_nivel'] = 3
 r = c.post('/admin/aircraft/update', json={
     'original_name': 'Boeing 747', 'name': 'Boeing 747', 'tipo_fuselaje': 'wide',
     'consumo_hora_kg': 9999, 'velocidad_crucero_kmh': 900, 'asientos_default': 400,
@@ -83,7 +83,7 @@ check('El contenedor tiene scroll horizontal', 'overflow: auto' in html)
 
 print('\n--- El switch de aviones regionales está en el mapa')
 with c.session_transaction() as s:
-    s['map_access'] = True
+    s['user_email'] = 'test@ypf.com'; s['user_nivel'] = 1
 html = c.get('/').get_data(as_text=True)
 check('Existe el botón del switch', 'modelToggleBtn' in html)
 check('Existe la función toggleAssignmentModel', 'function toggleAssignmentModel' in html)
@@ -109,7 +109,7 @@ def elegir_js(opciones, ppv, usar_regionales):
 
 
 with c.session_transaction() as s:
-    s['map_access'] = True
+    s['user_email'] = 'test@ypf.com'; s['user_nivel'] = 1
 d = c.get('/api/data').get_json()
 entry = next((m for m in d['cabotaje']['meta'] if m[0] == 'Aeroparque' and m[1] == 'Río Cuarto'), None)
 check('Se encontró la ruta Aeroparque-Río Cuarto en /api/data', entry is not None)
