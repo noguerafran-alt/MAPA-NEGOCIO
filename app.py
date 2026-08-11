@@ -9,7 +9,7 @@ import click
 from datetime import datetime
 from functools import wraps
 
-from flask import Flask, jsonify, request, render_template, send_file, session, redirect, url_for
+from flask import Flask, jsonify, request, render_template, send_file, session, redirect, url_for, Response
 from flask_compress import Compress
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -1755,6 +1755,39 @@ def aerolineas_page():
         cabotaje=cabotaje, internacional=internacional,
         total_cabotaje=total_cabotaje, total_internacional=total_internacional,
     )
+
+
+@app.route('/admin/aerolineas/csv')
+def admin_aerolineas_csv():
+    """Exporta a CSV los datos de Vuelos/Pax/Ocupación por aerolínea (AirlineMonthly).
+    Sin anio/mes exporta todo el histórico cargado; con ambos, solo ese mes."""
+    if nivel_actual() < 2:
+        return redirect(url_for('login_page'))
+
+    anio_sel = request.args.get('anio', type=int)
+    mes_sel = request.args.get('mes', type=int)
+
+    query = AirlineMonthly.query
+    if anio_sel and mes_sel:
+        query = query.filter_by(anio=anio_sel, mes=mes_sel)
+        nombre_archivo = f'aerolineas_{anio_sel}_{mes_sel:02d}.csv'
+    else:
+        nombre_archivo = 'aerolineas_historico.csv'
+    filas = query.order_by(AirlineMonthly.anio.desc(), AirlineMonthly.mes.desc(),
+                            AirlineMonthly.tipo.asc(), AirlineMonthly.pax_000.desc()).all()
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, delimiter=';')
+    writer.writerow(['Periodo', 'Anio', 'Mes', 'Tipo', 'Aerolinea', 'Vuelos', 'Pax [000]', 'Ocupacion'])
+    for fila in filas:
+        writer.writerow([
+            f'{fila.mes:02d}/{fila.anio}', fila.anio, fila.mes, fila.tipo, fila.aerolinea,
+            fila.vuelos, fila.pax_000, f'{fila.ocupacion * 100:.1f}%',
+        ])
+
+    respuesta = Response(buffer.getvalue(), mimetype='text/csv')
+    respuesta.headers['Content-Disposition'] = f'attachment; filename={nombre_archivo}'
+    return respuesta
 
 
 @app.route('/admin/fuel_sales/borrar_todo', methods=['POST'])
