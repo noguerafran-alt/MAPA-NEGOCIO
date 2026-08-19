@@ -1192,48 +1192,64 @@ function setArchivosFiles(fileList) {
   uploadArchivosBtn.disabled = false;
 }
 
-uploadArchivosBtn.addEventListener('click', async () => {
-  uploadArchivosBtn.disabled = true;
-  uploadArchivosBtn.textContent = 'Subiendo...';
-  resultArchivos.style.display = 'block';
-  resultArchivos.textContent = 'Subiendo…';
-  const fd = new FormData();
-  for (const f of uploadArchivosBtn._files) fd.append('files', f);
-  try {
-    const res = await fetch('/admin/archivos/subir', { method: 'POST', body: fd });
+const ARCHIVOS_CHUNK_SIZE = 8 * 1024 * 1024; // 8MB: cómodo bajo el timeout de ~100s del proxy de Render
+
+async function subirArchivoEnChunks(file, onProgreso) {
+  const totalChunks = Math.max(1, Math.ceil(file.size / ARCHIVOS_CHUNK_SIZE));
+  let uploadId = null;
+  for (let i = 0; i < totalChunks; i++) {
+    const inicio = i * ARCHIVOS_CHUNK_SIZE;
+    const pedazo = file.slice(inicio, inicio + ARCHIVOS_CHUNK_SIZE, file.type);
+    const fd = new FormData();
+    fd.append('chunk', pedazo, file.name);
+    fd.append('filename', file.name);
+    fd.append('chunk_index', i);
+    fd.append('total_chunks', totalChunks);
+    if (uploadId) fd.append('upload_id', uploadId);
+
+    const res = await fetch('/admin/archivos/subir_chunk', { method: 'POST', body: fd });
     let data;
     try {
       data = await res.json();
     } catch (parseErr) {
-      // Mismo caso que en Ventas de combustible: el servidor devolvió HTML, no JSON — no es
-      // un bug de esta app, es la infraestructura (Render dormido, o timeout del proxy).
-      resultArchivos.textContent =
+      throw new Error(
         `El servidor respondió con estado ${res.status} pero no en formato JSON — no es un ` +
-        `error de esta app, es la infraestructura (Render).\n\n` +
-        `Causas más probables:\n` +
-        `• La app estaba "dormida" (el plan gratis se apaga a los 15 min sin uso) y la ` +
-        `primera request la despertó a mitad de camino — esperá 30-60 segundos y volvé a ` +
-        `intentar.\n` +
-        `• El archivo es grande y el procesamiento superó el tiempo que tolera el proxy de ` +
-        `Render.`;
-      uploadArchivosBtn.disabled = false;
-      uploadArchivosBtn.textContent = 'Subir';
-      return;
+        `error de esta app, es la infraestructura (Render). Probá de nuevo en unos segundos.`);
     }
-    if (data.error) {
-      resultArchivos.textContent = 'Error: ' + data.error;
-    } else {
-      let msg = `✅ Subidos: ${data.subidos.join(', ') || '(ninguno)'}`;
-      if (data.errores && data.errores.length) {
-        msg += `\n\n⚠ ${data.errores.map(e => `${e.filename}: ${e.error}`).join('\n')}`;
-      }
-      resultArchivos.textContent = msg;
-      setTimeout(() => location.reload(), 1200);
-    }
-  } catch (err) {
-    resultArchivos.style.display = 'block';
-    resultArchivos.textContent = 'Error de red: ' + err;
+    if (data.error) throw new Error(data.error);
+    uploadId = data.upload_id || uploadId;
+    onProgreso(i + 1, totalChunks);
+    if (data.done) return data.filename;
   }
+  throw new Error('La subida terminó sin confirmación del servidor.');
+}
+
+uploadArchivosBtn.addEventListener('click', async () => {
+  uploadArchivosBtn.disabled = true;
+  resultArchivos.style.display = 'block';
+  const archivos = Array.from(uploadArchivosBtn._files);
+  const subidos = [];
+  const errores = [];
+
+  for (const f of archivos) {
+    uploadArchivosBtn.textContent = 'Subiendo...';
+    try {
+      await subirArchivoEnChunks(f, (hecho, total) => {
+        resultArchivos.textContent = `Subiendo ${f.name}: parte ${hecho}/${total}…`;
+      });
+      subidos.push(f.name);
+    } catch (err) {
+      errores.push({ filename: f.name, error: err.message || String(err) });
+    }
+  }
+
+  let msg = `✅ Subidos: ${subidos.join(', ') || '(ninguno)'}`;
+  if (errores.length) {
+    msg += `\n\n⚠ ${errores.map(e => `${e.filename}: ${e.error}`).join('\n')}`;
+  }
+  resultArchivos.textContent = msg;
+  if (subidos.length) setTimeout(() => location.reload(), 1200);
+
   uploadArchivosBtn.disabled = false;
   uploadArchivosBtn.textContent = 'Subir';
 });

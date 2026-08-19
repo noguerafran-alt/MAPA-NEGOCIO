@@ -3,6 +3,8 @@ import gc
 import json
 import csv
 import io
+import secrets
+import tempfile
 import unicodedata
 import getpass
 import click
@@ -1861,6 +1863,72 @@ def admin_archivos_subir():
 
     db.session.commit()
     return jsonify({"ok": True, "subidos": subidos, "errores": errores})
+
+
+ADMIN_FILE_MAX_BYTES = 100 * 1024 * 1024
+
+
+@app.route('/admin/archivos/subir_chunk', methods=['POST'])
+@limiter.limit("600 per minute")
+def admin_archivos_subir_chunk():
+    """Recibe el archivo en pedacitos (~8MB c/u) en vez de en un solo request: el proxy de
+    Render corta cualquier request que tarde más de ~100s, sin importar el plan ni el timeout
+    configurado en gunicorn, así que un archivo pesado en una conexión lenta nunca llega a
+    subirse entero de una. Cada chunk individual sí entra cómodo en esos 100s; el archivo se
+    va armando en un temporal en disco y recién se guarda en AdminFile cuando llega el último
+    pedazo. El disco de Render es efímero entre redeploys, pero un upload dura segundos/minutos,
+    así que sirve perfecto como buffer momentáneo."""
+    if nivel_actual() < 2:
+        return jsonify({"error": "No autorizado"}), 401
+
+    filename = request.form.get('filename', '')
+    chunk = request.files.get('chunk')
+    if not chunk:
+        return jsonify({"error": "Falta el chunk"}), 400
+    try:
+        chunk_index = int(request.form.get('chunk_index', ''))
+        total_chunks = int(request.form.get('total_chunks', ''))
+    except ValueError:
+        return jsonify({"error": "chunk_index/total_chunks inválidos"}), 400
+    if chunk_index < 0 or total_chunks < 1 or chunk_index >= total_chunks:
+        return jsonify({"error": "chunk_index/total_chunks inválidos"}), 400
+
+    if chunk_index == 0:
+        if not filename or not filename.lower().endswith(ALLOWED_ADMIN_FILE_EXT):
+            return jsonify({"error": "Solo se aceptan .csv, .txt, .xlsx, .xlsm, .zip"}), 400
+        upload_id = secrets.token_hex(16)
+    else:
+        upload_id = request.form.get('upload_id', '')
+        if not upload_id or len(upload_id) != 32 or any(c not in '0123456789abcdef' for c in upload_id):
+            return jsonify({"error": "upload_id inválido o expirado, reintentá desde el principio"}), 400
+
+    temp_path = os.path.join(tempfile.gettempdir(), f'admin_upload_{upload_id}.part')
+    try:
+        with open(temp_path, 'wb' if chunk_index == 0 else 'ab') as fh:
+            fh.write(chunk.read())
+    except OSError:
+        return jsonify({"error": "No se pudo guardar el chunk en el servidor"}), 500
+
+    if os.path.getsize(temp_path) > ADMIN_FILE_MAX_BYTES:
+        os.remove(temp_path)
+        return jsonify({"error": "El archivo supera el máximo de 100MB"}), 400
+
+    if chunk_index < total_chunks - 1:
+        return jsonify({"ok": True, "done": False, "upload_id": upload_id})
+
+    with open(temp_path, 'rb') as fh:
+        data = fh.read()
+    os.remove(temp_path)
+
+    safe_name = secure_filename(filename) or 'archivo'
+    db.session.add(AdminFile(
+        filename=safe_name,
+        content_type=chunk.mimetype,
+        size_bytes=len(data),
+        content=data,
+    ))
+    db.session.commit()
+    return jsonify({"ok": True, "done": True, "filename": safe_name})
 
 
 @app.route('/admin/archivos/<int:file_id>/descargar')
