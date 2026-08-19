@@ -1192,7 +1192,7 @@ function setArchivosFiles(fileList) {
   uploadArchivosBtn.disabled = false;
 }
 
-const ARCHIVOS_CHUNK_SIZE = 8 * 1024 * 1024; // 8MB: cómodo bajo el timeout de ~100s del proxy de Render
+const ARCHIVOS_CHUNK_SIZE = 4 * 1024 * 1024; // 4MB: cómodo bajo el timeout del proxy y liviano en RAM
 
 async function subirArchivoEnChunks(file, onProgreso) {
   const totalChunks = Math.max(1, Math.ceil(file.size / ARCHIVOS_CHUNK_SIZE));

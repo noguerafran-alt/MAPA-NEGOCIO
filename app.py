@@ -3,6 +3,7 @@ import gc
 import json
 import csv
 import io
+import shutil
 import secrets
 import tempfile
 import unicodedata
@@ -1904,17 +1905,25 @@ def admin_archivos_subir_chunk():
 
     temp_path = os.path.join(tempfile.gettempdir(), f'admin_upload_{upload_id}.part')
     try:
+        # copyfileobj en bloques de 1MB en vez de chunk.read(): evita tener el chunk entero
+        # (hasta ~8MB) como un único objeto bytes en RAM además de lo que ya bufferiza Werkzeug.
         with open(temp_path, 'wb' if chunk_index == 0 else 'ab') as fh:
-            fh.write(chunk.read())
+            shutil.copyfileobj(chunk.stream, fh, length=1024 * 1024)
     except OSError:
         return jsonify({"error": "No se pudo guardar el chunk en el servidor"}), 500
 
-    if os.path.getsize(temp_path) > ADMIN_FILE_MAX_BYTES:
+    tam_actual = os.path.getsize(temp_path)
+    if tam_actual > ADMIN_FILE_MAX_BYTES:
         os.remove(temp_path)
         return jsonify({"error": "El archivo supera el máximo de 100MB"}), 400
 
     if chunk_index < total_chunks - 1:
+        gc.collect()
         return jsonify({"ok": True, "done": False, "upload_id": upload_id})
+
+    content_type = chunk.mimetype
+    del chunk
+    gc.collect()  # libera lo que haya quedado de los chunks anteriores antes del pico final
 
     with open(temp_path, 'rb') as fh:
         data = fh.read()
@@ -1923,11 +1932,13 @@ def admin_archivos_subir_chunk():
     safe_name = secure_filename(filename) or 'archivo'
     db.session.add(AdminFile(
         filename=safe_name,
-        content_type=chunk.mimetype,
+        content_type=content_type,
         size_bytes=len(data),
         content=data,
     ))
     db.session.commit()
+    del data
+    gc.collect()  # el worker es de larga vida (1 solo worker); no dejar los 60MB colgando
     return jsonify({"ok": True, "done": True, "filename": safe_name})
 
 
