@@ -40,8 +40,9 @@ app.config.update(
     SESSION_COOKIE_SECURE=True,      # la cookie de sesión solo viaja por HTTPS
     SESSION_COOKIE_HTTPONLY=True,    # JS del navegador no puede leer la cookie (mitiga XSS)
     SESSION_COOKIE_SAMESITE='Lax',   # mitiga CSRF básico en requests cross-site
-    MAX_CONTENT_LENGTH=25 * 1024 * 1024,  # 25MB por request: evita que un upload gigante
-                                            # tumbe el worker por memoria en el free tier de Render
+    MAX_CONTENT_LENGTH=100 * 1024 * 1024,  # 100MB por request: da margen para .zip pesados
+                                             # en /admin/archivos sin dejar de acotar el máximo
+                                             # posible (el free tier de Render tiene poca RAM)
 )
 Compress(app)
 
@@ -1824,7 +1825,7 @@ def admin_fuel_sales_borrar_todo():
 
 # ---------- Admin: Archivos (carga/descarga momentánea de CSV/TXT/Excel) ----------
 
-ALLOWED_ADMIN_FILE_EXT = ('.csv', '.txt', '.xlsx', '.xlsm')
+ALLOWED_ADMIN_FILE_EXT = ('.csv', '.txt', '.xlsx', '.xlsm', '.zip')
 
 
 @app.route('/admin/archivos/subir', methods=['POST'])
@@ -1846,7 +1847,7 @@ def admin_archivos_subir():
         if not f.filename:
             continue
         if not f.filename.lower().endswith(ALLOWED_ADMIN_FILE_EXT):
-            errores.append({"filename": f.filename, "error": "Solo se aceptan .csv, .txt, .xlsx, .xlsm"})
+            errores.append({"filename": f.filename, "error": "Solo se aceptan .csv, .txt, .xlsx, .xlsm, .zip"})
             continue
         safe_name = secure_filename(f.filename) or 'archivo'
         data = f.read()

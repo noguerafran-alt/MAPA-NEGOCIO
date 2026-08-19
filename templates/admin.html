@@ -198,15 +198,16 @@
   <div class="card">
     <h3>Archivos (carga / descarga momentánea)</h3>
     <p style="color:#9aa4c7; font-size:13px;">
-      Subí cualquier CSV, TXT o Excel acá solo para guardarlo y poder bajarlo después desde
+      Subí cualquier CSV, TXT, Excel o ZIP acá solo para guardarlo y poder bajarlo después desde
       otra máquina — no se procesa ni se lee, es un simple guardado. Se almacena en la base
       de datos (Neon), no en el disco de Render, así que sobrevive a un redeploy. Pensado
-      para uso momentáneo: subís, bajás cuando necesitás, y después lo borrás.
+      para uso momentáneo: subís, bajás cuando necesitás, y después lo borrás. Tamaño máximo
+      por archivo: 100MB.
     </p>
     <div id="dropArchivos" style="border:2px dashed #3a4470; border-radius:10px; padding:24px;
          text-align:center; cursor:pointer;">
-      Arrastrá archivos acá, o hacé click para elegirlos (.csv, .txt, .xlsx, .xlsm)
-      <input type="file" id="fileArchivos" accept=".csv,.txt,.xlsx,.xlsm" multiple style="display:none">
+      Arrastrá archivos acá, o hacé click para elegirlos (.csv, .txt, .xlsx, .xlsm, .zip)
+      <input type="file" id="fileArchivos" accept=".csv,.txt,.xlsx,.xlsm,.zip" multiple style="display:none">
     </div>
     <div id="fileArchivosNames" style="margin-top:8px; font-size:13px; color:#9aa4c7;"></div>
     <button id="uploadArchivosBtn" disabled>Subir</button>
