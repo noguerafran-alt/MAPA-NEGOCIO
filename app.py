@@ -1761,6 +1761,16 @@ def aerolineas_page():
     )
 
 
+@app.route('/noticias')
+def noticias_page():
+    if nivel_actual() < 1:
+        return redirect(url_for('login_page'))
+    from noticias import load_noticias_feed
+    segment = (request.args.get('segment') or 'todas').strip() or 'todas'
+    feed = load_noticias_feed(segment)
+    return render_template('noticias.html', **feed)
+
+
 @app.route('/admin/aerolineas/csv')
 def admin_aerolineas_csv():
     """Exporta a CSV los datos de Vuelos/Pax/Ocupación por aerolínea (AirlineMonthly).
