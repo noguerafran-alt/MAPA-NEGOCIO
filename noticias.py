@@ -8,6 +8,7 @@ import os
 import urllib.error
 import urllib.request
 from datetime import date, timedelta
+import time
 
 SEGMENT_LABEL = {
     "combustible": "Combustible",
@@ -209,7 +210,16 @@ def _normalize_item(raw, idx):
 
 
 def _from_payload(payload):
-    briefing = payload.get("briefing") or {}
+    if not isinstance(payload, dict):
+        payload = {}
+    briefing = payload.get("briefing")
+    if not isinstance(briefing, dict) or not briefing:
+        briefing = {
+            "title": payload.get("title") or "",
+            "summary": payload.get("summary") or "",
+            "generatedAt": payload.get("generatedAt") or "",
+            "source": payload.get("source") or "automation",
+        }
     noticias = [_normalize_item(n, i) for i, n in enumerate(payload.get("noticias") or [], start=1)]
     counts = payload.get("counts") or {
         "total": len(noticias),
@@ -236,13 +246,31 @@ def _from_seed():
     return _from_payload(payload)
 
 
+DEFAULT_FEED_URL = (
+    "https://raw.githubusercontent.com/noguerafran-alt/noticias-aviacion-feed/main/noticias-feed.json"
+)
+_CACHE = {"at": 0.0, "payload": None}
+_CACHE_TTL = 600
+
+
 def _fetch_remote():
-    url = (os.environ.get("BRIEFING_API") or "").strip()
+    url = (os.environ.get("BRIEFING_API") or DEFAULT_FEED_URL).strip()
     if not url:
         return None
-    req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "mapa-negocio"})
+    now = time.time()
+    if _CACHE["payload"] is not None and (now - _CACHE["at"]) < _CACHE_TTL:
+        return _CACHE["payload"]
+    req = urllib.request.Request(
+        url,
+        headers={"Accept": "application/json", "User-Agent": "mapa-negocio"},
+    )
     with urllib.request.urlopen(req, timeout=4) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+        payload = json.loads(resp.read().decode("utf-8"))
+    if not isinstance(payload, dict):
+        return None
+    _CACHE["payload"] = payload
+    _CACHE["at"] = now
+    return payload
 
 
 def _parse_day(value):
