@@ -240,7 +240,7 @@ def _fetch_remote():
     if not url:
         return None
     req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "mapa-negocio"})
-    with urllib.request.urlopen(req, timeout=12) as resp:
+    with urllib.request.urlopen(req, timeout=4) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -263,7 +263,7 @@ def load_noticias_feed(segment="todas"):
     for key in SEGMENT_ORDER:
         items = [n for n in noticias if n["segment"] == key]
         if items:
-            grupos.append({"id": key, "label": SEGMENT_LABEL[key], "items": items})
+            grupos.append({"id": key, "label": SEGMENT_LABEL[key], "notas": items})
 
     generated = (briefing.get("generatedAt") or "")[:10]
     return {
