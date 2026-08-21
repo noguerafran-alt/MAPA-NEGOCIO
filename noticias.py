@@ -7,6 +7,7 @@ import json
 import os
 import urllib.error
 import urllib.request
+from datetime import date, timedelta
 
 SEGMENT_LABEL = {
     "combustible": "Combustible",
@@ -244,6 +245,15 @@ def _fetch_remote():
         return json.loads(resp.read().decode("utf-8"))
 
 
+def _parse_day(value):
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
 def load_noticias_feed(segment="todas"):
     error = None
     try:
@@ -255,6 +265,21 @@ def load_noticias_feed(segment="todas"):
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
         briefing, noticias, counts = _from_seed()
         error = f"No se pudo leer el API remoto; se muestra el último briefing local. ({exc.__class__.__name__})"
+
+    cutoff = date.today() - timedelta(days=7)
+    recientes = []
+    for n in noticias:
+        day = _parse_day(n.get("publishedAt"))
+        if day and day >= cutoff:
+            recientes.append(n)
+    noticias = recientes
+    counts = {
+        "total": len(noticias),
+        "combustible": sum(1 for n in noticias if n["segment"] == "combustible"),
+        "jet": sum(1 for n in noticias if n["fuelTag"] == "jet"),
+        "avgas": sum(1 for n in noticias if n["fuelTag"] == "avgas"),
+        "saf": sum(1 for n in noticias if n["fuelTag"] == "saf"),
+    }
 
     if segment and segment != "todas":
         noticias = [n for n in noticias if n["segment"] == segment]
