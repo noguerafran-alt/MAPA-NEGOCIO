@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Noticias — Briefing de Aviación</title>
+<style>
+  body { font-family: Arial, sans-serif; background: #0b1020; color: #eee; margin: 0; padding: 30px; }
+  .wrap { max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 20px; display: flex; align-items: center; gap: 10px; }
+  h2 { font-size: 15px; color: #9aa4c7; border-bottom: 1px solid #2a3358; padding-bottom: 8px; margin-top: 30px; }
+  .card { background: #10162e; border: 1px solid #2a3358; border-radius: 12px; padding: 20px 24px; margin-bottom: 20px; }
+  a.back { color: #9aa4c7; font-size: 12px; text-decoration: none; }
+  a.back:hover { color: #eee; }
+  select { padding: 6px 10px; border-radius: 6px; border: 1px solid #3a4470; background: #0b1020; color: #fff; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid #2a3358; }
+  th { color: #9aa4c7; font-weight: normal; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.total { font-weight: bold; background: rgba(76,124,240,0.08); }
+  tr.item { cursor: pointer; }
+  tr.item:hover { background: rgba(76,124,240,0.06); }
+  tr.item.open { background: rgba(76,124,240,0.06); }
+  .empty { color: #9aa4c7; font-size: 13px; padding: 10px 0; }
+  .muted { color: #9aa4c7; font-size: 13px; }
+  .alta { color: #4c7cf0; font-size: 12px; margin-left: 8px; }
+  .detail { color: #9aa4c7; font-size: 13px; line-height: 1.55; padding: 4px 10px 14px; }
+  .detail a { color: #4c7cf0; }
+  .bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 16px; }
+  .bars i { display: block; width: 3px; border-radius: 1px; background: #4c7cf0; }
+  .bars i:nth-child(1) { height: 7px; opacity: .6; }
+  .bars i:nth-child(2) { height: 11px; opacity: .8; }
+  .bars i:nth-child(3) { height: 16px; }
+  .bars i:nth-child(4) { height: 10px; background: #9aa4c7; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p><a href="/" class="back">← Volver al mapa</a></p>
+  <h1><span class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i></span> Noticias — Briefing de Aviación</h1>
+  <p class="muted">Fuente: Automatización NOTICIAS AVIACION{% if generated_day %}, actualizado el {{ generated_day }}.{% else %}.{% endif %}</p>
+
+  {% if error %}
+  <div class="card"><div class="empty">{{ error }}</div></div>
+  {% endif %}
+
+  <div class="card">
+    <form method="get" style="display:flex; align-items:center; gap:10px;">
+      <label style="font-size:13px; color:#9aa4c7;">Recorte:</label>
+      <select name="segment" onchange="this.form.submit()">
+        {% for value, label in segmentos %}
+        <option value="{{ value }}" {% if value == segment_sel %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </form>
+  </div>
+
+  <h2>Indicadores</h2>
+  <div class="card">
+    <table>
+      <tr>
+        <th>Noticias</th>
+        <th class="num">Combustible</th>
+        <th class="num">JET A-1</th>
+        <th class="num">AVGAS</th>
+        <th class="num">SAF</th>
+      </tr>
+      <tr class="total">
+        <td>{{ counts.total }}</td>
+        <td class="num">{{ counts.combustible }}</td>
+        <td class="num">{{ counts.jet }}</td>
+        <td class="num">{{ counts.avgas }}</td>
+        <td class="num">{{ counts.saf }}</td>
+      </tr>
+    </table>
+  </div>
+
+  {% if briefing %}
+  <h2>Resumen ejecutivo</h2>
+  <div class="card">
+    <p style="margin-top:0;">{{ briefing.title }}</p>
+    <p class="muted">{{ briefing.summary }}</p>
+  </div>
+  {% endif %}
+
+  {% if grupos %}
+    {% for grupo in grupos %}
+    <h2>{{ grupo.label }}</h2>
+    <div class="card">
+      <table>
+        <tr>
+          <th>Noticia</th>
+          <th>Aerolínea</th>
+          <th class="num">Combustible</th>
+          <th class="num">Fecha</th>
+        </tr>
+        {% for n in grupo.items %}
+        <tr class="item" onclick="toggleRow(this)">
+          <td>{{ n.title }}{% if n.relevance == 'alta' %}<span class="alta">Alta</span>{% endif %}</td>
+          <td>{{ n.airline }}</td>
+          <td class="num">{{ n.fuel_label }}</td>
+          <td class="num">{{ n.publishedAt or "—" }}</td>
+        </tr>
+        <tr class="detail-row" style="display:none;">
+          <td colspan="4">
+            <div class="detail">
+              {{ n.summary }}
+              {% if n.source %}
+              <div style="margin-top:8px; font-size:12px; color:#6b7394;">
+                {{ n.source }}
+                {% if n.sourceUrl %}
+                · <a href="{{ n.sourceUrl }}" target="_blank" rel="noreferrer" onclick="event.stopPropagation()">Leer fuente</a>
+                {% endif %}
+              </div>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+        <tr class="total">
+          <td>TOTAL</td>
+          <td></td>
+          <td class="num">{{ grupo.items|length }}</td>
+          <td></td>
+        </tr>
+      </table>
+    </div>
+    {% endfor %}
+  {% else %}
+  <h2>Noticias</h2>
+  <div class="card"><div class="empty">Sin notas en este recorte. Probá otro filtro.</div></div>
+  {% endif %}
+</div>
+<script>
+function toggleRow(row) {
+  const next = row.nextElementSibling;
+  if (!next || !next.classList.contains('detail-row')) return;
+  const open = next.style.display !== 'none';
+  next.style.display = open ? 'none' : 'table-row';
+  row.classList.toggle('open', !open);
+}
+</script>
+</body>
+</html>
