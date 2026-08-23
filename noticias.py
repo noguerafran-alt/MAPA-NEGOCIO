@@ -7,7 +7,8 @@ import json
 import os
 import urllib.error
 import urllib.request
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 import time
 
 SEGMENT_LABEL = {
@@ -294,7 +295,8 @@ def load_noticias_feed(segment="todas"):
         briefing, noticias, counts = _from_seed()
         error = f"No se pudo leer el API remoto; se muestra el último briefing local. ({exc.__class__.__name__})"
 
-    cutoff = date.today() - timedelta(days=7)
+    today = datetime.now(ZoneInfo("America/Buenos_Aires")).date()
+    cutoff = today - timedelta(days=7)
     recientes = []
     for n in noticias:
         day = _parse_day(n.get("publishedAt"))
