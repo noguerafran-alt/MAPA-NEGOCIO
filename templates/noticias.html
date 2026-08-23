@@ -31,6 +31,49 @@
   .bars i:nth-child(2) { height: 11px; opacity: .8; }
   .bars i:nth-child(3) { height: 16px; }
   .bars i:nth-child(4) { height: 10px; background: #9aa4c7; }
+  .filters { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .cal-wrap { position: relative; }
+  .cal-btn {
+    min-width: 220px; text-align: left; padding: 6px 10px; border-radius: 6px;
+    border: 1px solid #3a4470; background: #0b1020; color: #fff; font-size: 13px; cursor: pointer;
+  }
+  .cal-btn:hover, .cal-btn.open { border-color: #4c7cf0; }
+  .cal-btn span.caret { float: right; color: #9aa4c7; }
+  .cal-panel {
+    display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 20;
+    width: 292px; background: #10162e; border: 1px solid #2a3358; border-radius: 12px;
+    padding: 12px; box-shadow: 0 12px 30px rgba(0,0,0,0.35);
+  }
+  .cal-panel.show { display: block; }
+  .cal-presets { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+  .cal-presets button {
+    padding: 6px 8px; border-radius: 6px; border: 1px solid #2a3358; background: #0b1020;
+    color: #9aa4c7; font-size: 11px; cursor: pointer;
+  }
+  .cal-presets button:hover, .cal-presets button.on { border-color: #4c7cf0; color: #eee; background: rgba(76,124,240,0.12); }
+  .cal-nav { display: flex; align-items: center; justify-content: space-between; margin: 8px 0; }
+  .cal-nav button {
+    width: 28px; height: 28px; border-radius: 6px; border: 1px solid #2a3358; background: #0b1020;
+    color: #eee; cursor: pointer;
+  }
+  .cal-nav button:disabled { opacity: .35; cursor: default; }
+  .cal-nav strong { font-size: 13px; font-weight: normal; }
+  .cal { width: 100%; margin: 0; border-collapse: collapse; font-size: 12px; }
+  .cal th { text-align: center; padding: 4px 0; border: 0; color: #9aa4c7; font-size: 11px; }
+  .cal td { text-align: center; padding: 0; border: 0; }
+  .cal .week { cursor: pointer; }
+  .cal .week:hover td { background: rgba(76,124,240,0.08); }
+  .cal .week.on td { background: rgba(76,124,240,0.16); }
+  .cal .week.mute { cursor: default; }
+  .cal .week.mute:hover td { background: transparent; }
+  .cal .day {
+    display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
+    width: 32px; height: 32px; border-radius: 6px; color: #eee;
+  }
+  .cal .out .day { color: #6b7394; }
+  .cal .mute .day { color: #6b7394; }
+  .cal .dot { width: 4px; height: 4px; border-radius: 50%; background: #4c7cf0; margin-top: 1px; }
+  .cal .hint { color: #6b7394; font-size: 11px; margin: 8px 0 0; }
 </style>
 </head>
 <body>
@@ -44,13 +87,33 @@
   {% endif %}
 
   <div class="card">
-    <form method="get" style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+    <form id="filtros" method="get" class="filters">
+      <input type="hidden" name="periodo" id="periodo" value="{{ periodo_sel }}">
       <label style="font-size:13px; color:#9aa4c7;">Período:</label>
-      <select name="periodo" onchange="this.form.submit()">
-        {% for value, label in periodos %}
-        <option value="{{ value }}" {% if value == periodo_sel %}selected{% endif %}>{{ label }}</option>
-        {% endfor %}
-      </select>
+      <div class="cal-wrap">
+        <button type="button" class="cal-btn" id="cal-toggle" aria-expanded="false">
+          {{ periodo_label }} <span class="caret">▾</span>
+        </button>
+        <div class="cal-panel" id="cal-panel">
+          <div class="cal-presets">
+            {% for value, label in periodos %}
+            <button type="button" data-periodo="{{ value }}" class="{% if value == periodo_sel %}on{% endif %}">{{ label }}</button>
+            {% endfor %}
+          </div>
+          <div class="cal-nav">
+            <button type="button" id="cal-prev" aria-label="Mes anterior">‹</button>
+            <strong id="cal-month"></strong>
+            <button type="button" id="cal-next" aria-label="Mes siguiente">›</button>
+          </div>
+          <table class="cal">
+            <thead>
+              <tr><th>L</th><th>M</th><th>M</th><th>J</th><th>V</th><th>S</th><th>D</th></tr>
+            </thead>
+            <tbody id="cal-body"></tbody>
+          </table>
+          <p class="hint">Las semanas con punto azul tienen notas. Clic en la fila para abrirlas.</p>
+        </div>
+      </div>
       <label style="font-size:13px; color:#9aa4c7;">Recorte:</label>
       <select name="segment" onchange="this.form.submit()">
         {% for value, label in segmentos %}
@@ -139,14 +202,120 @@
   <div class="card"><div class="empty">Sin notas en este período. Probá otra semana o Todo el histórico.</div></div>
   {% endif %}
 </div>
+<script id="cal-data" type="application/json">{{ cal | tojson }}</script>
 <script>
 function toggleRow(row) {
   const next = row.nextElementSibling;
-  if (!next || !next.classList.contains('detail-row')) return;
-  const open = next.style.display !== 'none';
-  next.style.display = open ? 'none' : 'table-row';
-  row.classList.toggle('open', !open);
+  if (!next || !next.classList.contains("detail-row")) return;
+  const open = next.style.display !== "none";
+  next.style.display = open ? "none" : "table-row";
+  row.classList.toggle("open", !open);
 }
+
+(function () {
+  const data = JSON.parse(document.getElementById("cal-data").textContent);
+  const form = document.getElementById("filtros");
+  const periodo = document.getElementById("periodo");
+  const toggle = document.getElementById("cal-toggle");
+  const panel = document.getElementById("cal-panel");
+  const body = document.getElementById("cal-body");
+  const monthEl = document.getElementById("cal-month");
+  const prev = document.getElementById("cal-prev");
+  const next = document.getElementById("cal-next");
+  const weeks = new Set(data.weeks || []);
+  const days = new Set(data.days || []);
+  const months = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+  const min = data.min ? new Date(data.min + "T12:00:00") : new Date();
+  const max = data.max ? new Date(data.max + "T12:00:00") : new Date();
+  let view = (data.view || "").split("-");
+  let year = Number(view[0]) || max.getFullYear();
+  let month = Number(view[1]) || (max.getMonth() + 1);
+  const selectedWeek = (data.selected || "").indexOf("w:") === 0 ? data.selected.slice(2) : "";
+
+  function iso(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return y + "-" + m + "-" + day;
+  }
+  function mondayOf(d) {
+    const copy = new Date(d.getTime());
+    const wd = (copy.getDay() + 6) % 7;
+    copy.setDate(copy.getDate() - wd);
+    return copy;
+  }
+  function setPeriodo(value) {
+    periodo.value = value;
+    form.submit();
+  }
+  function render() {
+    monthEl.textContent = months[month - 1] + " " + year;
+    const first = new Date(year, month - 1, 1);
+    const start = mondayOf(first);
+    const minMonth = min.getFullYear() * 12 + min.getMonth();
+    const maxMonth = max.getFullYear() * 12 + max.getMonth();
+    const curMonth = year * 12 + (month - 1);
+    prev.disabled = curMonth <= minMonth;
+    next.disabled = curMonth >= maxMonth;
+    body.innerHTML = "";
+    for (let w = 0; w < 6; w++) {
+      const tr = document.createElement("tr");
+      const weekStart = new Date(start.getTime());
+      weekStart.setDate(start.getDate() + w * 7);
+      const weekIso = iso(weekStart);
+      const has = weeks.has(weekIso);
+      tr.className = "week" + (has ? "" : " mute") + (weekIso === selectedWeek ? " on" : "");
+      if (has) {
+        tr.addEventListener("click", function () { setPeriodo("w:" + weekIso); });
+      }
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(weekStart.getTime());
+        d.setDate(weekStart.getDate() + i);
+        const td = document.createElement("td");
+        if (d.getMonth() !== month - 1) td.className = "out";
+        const wrap = document.createElement("span");
+        wrap.className = "day";
+        wrap.appendChild(document.createTextNode(String(d.getDate())));
+        if (days.has(iso(d))) {
+          const dot = document.createElement("span");
+          dot.className = "dot";
+          wrap.appendChild(dot);
+        }
+        td.appendChild(wrap);
+        tr.appendChild(td);
+      }
+      body.appendChild(tr);
+    }
+  }
+
+  toggle.addEventListener("click", function (ev) {
+    ev.stopPropagation();
+    const open = !panel.classList.contains("show");
+    panel.classList.toggle("show", open);
+    toggle.classList.toggle("open", open);
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  document.addEventListener("click", function (ev) {
+    if (!panel.contains(ev.target) && ev.target !== toggle) {
+      panel.classList.remove("show");
+      toggle.classList.remove("open");
+    }
+  });
+  prev.addEventListener("click", function () {
+    month -= 1;
+    if (month < 1) { month = 12; year -= 1; }
+    render();
+  });
+  next.addEventListener("click", function () {
+    month += 1;
+    if (month > 12) { month = 1; year += 1; }
+    render();
+  });
+  panel.querySelectorAll("[data-periodo]").forEach(function (btn) {
+    btn.addEventListener("click", function () { setPeriodo(btn.getAttribute("data-periodo")); });
+  });
+  render();
+})();
 </script>
 </body>
 </html>
