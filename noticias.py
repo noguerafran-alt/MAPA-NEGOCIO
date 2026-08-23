@@ -300,25 +300,16 @@ def _fmt_span(start, end):
     return f"{start.day} {_MESES[start.month - 1]} – {end.day} {_MESES[end.month - 1]}"
 
 
+PERIODO_PRESETS = [
+    ("7d", "Últimos 7 días"),
+    ("prev", "Semana anterior"),
+    ("28d", "Últimas 4 semanas"),
+    ("todas", "Todo el histórico"),
+]
+
+
 def _periodo_options(noticias, today):
-    weeks = sorted(
-        {
-            _week_start(day)
-            for n in noticias
-            if (day := _parse_day(n.get("publishedAt")))
-        },
-        reverse=True,
-    )
-    opts = [
-        ("7d", "Últimos 7 días"),
-        ("prev", "Semana anterior"),
-        ("28d", "Últimas 4 semanas"),
-    ]
-    for start in weeks:
-        end = start + timedelta(days=6)
-        opts.append((f"w:{start.isoformat()}", f"Semana {_fmt_span(start, end)}"))
-    opts.append(("todas", "Todo el histórico"))
-    return opts
+    return list(PERIODO_PRESETS)
 
 
 def _in_periodo(day, periodo, today):
@@ -353,9 +344,22 @@ def load_noticias_feed(segment="todas", periodo="7d"):
         error = f"No se pudo leer el API remoto; se muestra el último briefing local. ({exc.__class__.__name__})"
 
     today = _today_ar()
+    dias = sorted({
+        day
+        for n in noticias
+        if (day := _parse_day(n.get("publishedAt")))
+    })
+    weeks = sorted({_week_start(d) for d in dias})
     periodos = _periodo_options(noticias, today)
     valid = {key for key, _ in periodos}
-    if periodo not in valid:
+    if periodo.startswith("w:"):
+        try:
+            picked = date.fromisoformat(periodo[2:12])
+            start = _week_start(picked)
+            periodo = f"w:{start.isoformat()}"
+        except ValueError:
+            periodo = "7d"
+    elif periodo not in valid:
         periodo = "7d"
 
     filtradas = []
@@ -382,8 +386,17 @@ def load_noticias_feed(segment="todas", periodo="7d"):
         if items:
             grupos.append({"id": key, "label": SEGMENT_LABEL[key], "notas": items})
 
-    periodo_label = next((label for key, label in periodos if key == periodo), "Últimos 7 días")
+    if periodo.startswith("w:"):
+        start = date.fromisoformat(periodo[2:])
+        periodo_label = f"Semana {_fmt_span(start, start + timedelta(days=6))}"
+    else:
+        periodo_label = next((label for key, label in periodos if key == periodo), "Últimos 7 días")
     generated = (briefing.get("generatedAt") or "")[:10]
+    cal_view = today
+    if periodo.startswith("w:"):
+        cal_view = date.fromisoformat(periodo[2:])
+    elif dias:
+        cal_view = dias[-1]
     return {
         "briefing": briefing,
         "grupos": grupos,
@@ -395,4 +408,12 @@ def load_noticias_feed(segment="todas", periodo="7d"):
         "periodo_label": periodo_label,
         "generated_day": generated,
         "error": error,
+        "cal": {
+            "weeks": [w.isoformat() for w in weeks],
+            "days": [d.isoformat() for d in dias],
+            "selected": periodo,
+            "min": (dias[0].isoformat() if dias else today.isoformat()),
+            "max": today.isoformat(),
+            "view": f"{cal_view.year}-{cal_view.month:02d}",
+        },
     }
