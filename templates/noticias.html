@@ -16,6 +16,8 @@
   th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid #2a3358; }
   th { color: #9aa4c7; font-weight: normal; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  th.now, td.now { white-space: nowrap; }
+  td.fecha, th.fecha { white-space: nowrap; width: 1%; text-align: right; font-variant-numeric: tabular-nums; }
   tr.total { font-weight: bold; background: rgba(76,124,240,0.08); }
   tr.item { cursor: pointer; }
   tr.item:hover { background: rgba(76,124,240,0.06); }
@@ -158,18 +160,18 @@
       <table>
         <tr>
           <th>Noticia</th>
-          <th>Aerolínea</th>
-          <th>Prioridad</th>
-          <th class="num">Combustible</th>
-          <th class="num">Fecha</th>
+          <th class="now">Aerolínea</th>
+          <th class="now">Prioridad</th>
+          <th class="now num">Combustible</th>
+          <th class="fecha">Fecha</th>
         </tr>
         {% for n in grupo.notas %}
         <tr class="item" onclick="toggleRow(this)">
           <td>{{ n.title }}</td>
-          <td>{{ n.airline }}</td>
-          <td>{% if n.relevance == 'alta' %}<span class="alta">Alta</span>{% else %}<span class="muted">Media</span>{% endif %}</td>
-          <td class="num">{{ n.fuel_label }}</td>
-          <td class="num">{{ n.publishedAt or "—" }}</td>
+          <td class="now">{{ n.airline }}</td>
+          <td class="now">{% if n.relevance == 'alta' %}<span class="alta">Alta</span>{% else %}<span class="muted">Media</span>{% endif %}</td>
+          <td class="now num">{{ n.fuel_label }}</td>
+          <td class="fecha">{{ n.fecha_label or n.publishedAt or "—" }}</td>
         </tr>
         <tr class="detail-row" style="display:none;">
           <td colspan="5">
