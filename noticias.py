@@ -283,7 +283,64 @@ def _parse_day(value):
         return None
 
 
-def load_noticias_feed(segment="todas"):
+_MESES = ("ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic")
+
+
+def _today_ar():
+    return datetime.now(ZoneInfo("America/Buenos_Aires")).date()
+
+
+def _week_start(day):
+    return day - timedelta(days=day.weekday())
+
+
+def _fmt_span(start, end):
+    if start.month == end.month:
+        return f"{start.day}–{end.day} {_MESES[start.month - 1]}"
+    return f"{start.day} {_MESES[start.month - 1]} – {end.day} {_MESES[end.month - 1]}"
+
+
+def _periodo_options(noticias, today):
+    weeks = sorted(
+        {
+            _week_start(day)
+            for n in noticias
+            if (day := _parse_day(n.get("publishedAt")))
+        },
+        reverse=True,
+    )
+    opts = [
+        ("7d", "Últimos 7 días"),
+        ("prev", "Semana anterior"),
+        ("28d", "Últimas 4 semanas"),
+    ]
+    for start in weeks:
+        end = start + timedelta(days=6)
+        opts.append((f"w:{start.isoformat()}", f"Semana {_fmt_span(start, end)}"))
+    opts.append(("todas", "Todo el histórico"))
+    return opts
+
+
+def _in_periodo(day, periodo, today):
+    if not day:
+        return False
+    if periodo == "todas":
+        return True
+    if periodo == "prev":
+        return today - timedelta(days=14) <= day < today - timedelta(days=7)
+    if periodo == "28d":
+        return day >= today - timedelta(days=28)
+    if periodo.startswith("w:"):
+        try:
+            start = date.fromisoformat(periodo[2:])
+        except ValueError:
+            start = None
+        if start:
+            return start <= day <= start + timedelta(days=6)
+    return day >= today - timedelta(days=7)
+
+
+def load_noticias_feed(segment="todas", periodo="7d"):
     error = None
     try:
         remote = _fetch_remote()
@@ -295,14 +352,19 @@ def load_noticias_feed(segment="todas"):
         briefing, noticias, counts = _from_seed()
         error = f"No se pudo leer el API remoto; se muestra el último briefing local. ({exc.__class__.__name__})"
 
-    today = datetime.now(ZoneInfo("America/Buenos_Aires")).date()
-    cutoff = today - timedelta(days=7)
-    recientes = []
+    today = _today_ar()
+    periodos = _periodo_options(noticias, today)
+    valid = {key for key, _ in periodos}
+    if periodo not in valid:
+        periodo = "7d"
+
+    filtradas = []
     for n in noticias:
         day = _parse_day(n.get("publishedAt"))
-        if day and day >= cutoff:
-            recientes.append(n)
-    noticias = recientes
+        if _in_periodo(day, periodo, today):
+            filtradas.append(n)
+    filtradas.sort(key=lambda n: n.get("publishedAt") or "", reverse=True)
+    noticias = filtradas
     counts = {
         "total": len(noticias),
         "combustible": sum(1 for n in noticias if n["segment"] == "combustible"),
@@ -320,6 +382,7 @@ def load_noticias_feed(segment="todas"):
         if items:
             grupos.append({"id": key, "label": SEGMENT_LABEL[key], "notas": items})
 
+    periodo_label = next((label for key, label in periodos if key == periodo), "Últimos 7 días")
     generated = (briefing.get("generatedAt") or "")[:10]
     return {
         "briefing": briefing,
@@ -327,6 +390,9 @@ def load_noticias_feed(segment="todas"):
         "counts": counts,
         "segment_sel": segment or "todas",
         "segmentos": [("todas", "Todas")] + [(k, SEGMENT_LABEL[k]) for k in SEGMENT_ORDER],
+        "periodo_sel": periodo,
+        "periodos": periodos,
+        "periodo_label": periodo_label,
         "generated_day": generated,
         "error": error,
     }
