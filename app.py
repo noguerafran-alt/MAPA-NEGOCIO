@@ -1767,7 +1767,8 @@ def noticias_page():
         return redirect(url_for('login_page'))
     from noticias import load_noticias_feed
     segment = (request.args.get('segment') or 'todas').strip() or 'todas'
-    feed = load_noticias_feed(segment)
+    periodo = (request.args.get('periodo') or '7d').strip() or '7d'
+    feed = load_noticias_feed(segment, periodo)
     return render_template('noticias.html', **feed)
 
 
