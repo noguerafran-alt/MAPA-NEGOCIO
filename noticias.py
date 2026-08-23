@@ -300,6 +300,16 @@ def _fmt_span(start, end):
     return f"{start.day} {_MESES[start.month - 1]} – {end.day} {_MESES[end.month - 1]}"
 
 
+def _fecha_label(value, today):
+    day = _parse_day(value)
+    if not day:
+        return "—"
+    mes = _MESES[day.month - 1]
+    if day.year == today.year:
+        return f"{day.day} {mes}"
+    return f"{day.day} {mes} {str(day.year)[2:]}"
+
+
 PERIODO_PRESETS = [
     ("7d", "Últimos 7 días"),
     ("prev", "Semana anterior"),
@@ -366,6 +376,7 @@ def load_noticias_feed(segment="todas", periodo="7d"):
     for n in noticias:
         day = _parse_day(n.get("publishedAt"))
         if _in_periodo(day, periodo, today):
+            n["fecha_label"] = _fecha_label(n.get("publishedAt"), today)
             filtradas.append(n)
     filtradas.sort(key=lambda n: n.get("publishedAt") or "", reverse=True)
     noticias = filtradas
