@@ -17,8 +17,10 @@ from flask_compress import Compress
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.utils import secure_filename
-from sqlalchemy import func
+from sqlalchemy import func, event
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import defer
+from sqlalchemy.pool import NullPool
 from authlib.integrations.flask_client import OAuth
 import openpyxl
 
@@ -69,11 +71,67 @@ limiter = Limiter(
 def _rate_limited(e):
     return jsonify({"error": "Demasiados intentos. Esperá un momento y volvé a intentar."}), 429
 
-db_url = os.environ.get('DATABASE_URL', 'sqlite:///local_dev.db')
-if db_url.startswith('postgres://'):
-    db_url = db_url.replace('postgres://', 'postgresql://', 1)
-app.config['SQLALCHEMY_DATABASE_URI'] = db_url
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_pre_ping': True}
+@event.listens_for(Engine, "connect")
+def _sqlite_pragmas(dbapi_conn, _connection_record):
+    try:
+        import sqlite3
+        if not isinstance(dbapi_conn, sqlite3.Connection):
+            return
+    except Exception:
+        return
+    cur = dbapi_conn.cursor()
+    cur.execute("PRAGMA journal_mode=WAL")
+    cur.execute("PRAGMA synchronous=NORMAL")
+    cur.execute("PRAGMA busy_timeout=30000")
+    cur.execute("PRAGMA temp_store=MEMORY")
+    cur.close()
+
+
+def _normalize_db_url(url):
+    url = (url or "").strip()
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+    return url
+
+
+def _disk_path():
+    return os.environ.get("RENDER_DISK_PATH", "/var/data")
+
+
+def _disk_ready():
+    path = _disk_path()
+    return bool(path) and os.path.isdir(path) and os.access(path, os.W_OK)
+
+
+def _sqlite_path():
+    return os.path.join(_disk_path(), "mapa.db")
+
+
+def _migrate_marker_path():
+    return os.path.join(_disk_path(), ".migrated_from_neon")
+
+
+def _postgres_source_url():
+    """Neon/Postgres de origen para la copia de una sola vez al disco."""
+    for key in ("NEON_DATABASE_URL", "POSTGRES_URL", "DATABASE_URL"):
+        url = _normalize_db_url(os.environ.get(key, ""))
+        if url.startswith("postgresql"):
+            return url
+    return ""
+
+
+if _disk_ready():
+    db_url = "sqlite:///" + _sqlite_path()
+else:
+    db_url = _normalize_db_url(os.environ.get("DATABASE_URL", "sqlite:///local_dev.db")) or "sqlite:///local_dev.db"
+app.config["SQLALCHEMY_DATABASE_URI"] = db_url
+if db_url.startswith("sqlite"):
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+        "poolclass": NullPool,
+        "connect_args": {"check_same_thread": False, "timeout": 30},
+    }
+else:
+    app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True}
 
 db.init_app(app)
 
@@ -200,13 +258,101 @@ def autorizar_usuario(email, nombre, nivel):
     print(f"Cuenta {accion}: {email} (nivel={nivel}).")
 
 
+def _copy_postgres_into_current_db(pg_url):
+    """Copia tabla por tabla desde Neon/Postgres al SQLite actual, en lotes chicos
+    para no volar los 512 MB de RAM (admin_file de a una fila por los blobs)."""
+    from sqlalchemy import create_engine, MetaData, select, insert as sa_insert
+
+    src = create_engine(pg_url, pool_pre_ping=True, pool_size=1, max_overflow=0)
+    src_meta = MetaData()
+    src_meta.reflect(bind=src)
+    dest_names = set(db.metadata.tables.keys())
+    tables = [t for t in src_meta.sorted_tables if t.name in dest_names]
+    tables.sort(key=lambda t: 1 if t.name == "admin_file" else 0)
+
+    app.logger.info("Migrando %d tablas desde Postgres al disco…", len(tables))
+    with src.connect() as conn:
+        for table in tables:
+            dest_table = db.metadata.tables[table.name]
+            dest_cols = {c.name for c in dest_table.columns}
+            batch_size = 1 if table.name == "admin_file" else 100
+            result = conn.execution_options(stream_results=True).execute(select(table))
+            batch = []
+            n = 0
+            for row in result:
+                mapping = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
+                cleaned = {}
+                for k, v in mapping.items():
+                    if k not in dest_cols:
+                        continue
+                    if isinstance(v, datetime) and getattr(v, "tzinfo", None):
+                        v = v.replace(tzinfo=None)
+                    cleaned[k] = v
+                batch.append(cleaned)
+                if len(batch) >= batch_size:
+                    db.session.execute(sa_insert(dest_table), batch)
+                    db.session.commit()
+                    n += len(batch)
+                    batch = []
+                    gc.collect()
+            if batch:
+                db.session.execute(sa_insert(dest_table), batch)
+                db.session.commit()
+                n += len(batch)
+                gc.collect()
+            app.logger.info("  %s: %d filas", table.name, n)
+    src.dispose()
+
+
+def _maybe_migrate_from_postgres():
+    if not _disk_ready():
+        return
+    if os.path.exists(_migrate_marker_path()):
+        return
+    pg_url = _postgres_source_url()
+    if not pg_url:
+        return
+    # Si ya hay datos en SQLite, no pisar.
+    try:
+        if User.query.count() or FuelSale.query.count() or RouteMonthly.query.count():
+            open(_migrate_marker_path(), "w").write("already-had-data\n")
+            return
+    except Exception:
+        db.session.rollback()
+    try:
+        app.logger.info("Copiando Neon → %s", _sqlite_path())
+        _copy_postgres_into_current_db(pg_url)
+        open(_migrate_marker_path(), "w").write("ok\n")
+        app.logger.info("Migración a disco completa.")
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("Falló la copia desde Neon; se sigue con SQLite (posiblemente vacío).")
+
+
+@app.cli.command("migrar-de-neon")
+def migrar_de_neon():
+    """Copia la base de Neon al SQLite del disco de Render. Corre una vez desde el Shell."""
+    pg_url = _postgres_source_url()
+    if not pg_url:
+        print("Falta NEON_DATABASE_URL (o DATABASE_URL apuntando a Postgres).")
+        raise SystemExit(1)
+    if not _disk_ready():
+        print("No hay disco escribible en %s. Montá el disco de Render en /var/data." % _disk_path())
+        raise SystemExit(1)
+    with app.app_context():
+        db.create_all()
+        _copy_postgres_into_current_db(pg_url)
+        open(_migrate_marker_path(), "w").write("ok\n")
+    print("Listo:", _sqlite_path())
+
+
 def ensure_tables():
     db.create_all()
+    _maybe_migrate_from_postgres()
     _ensure_manual_route_columns()
     _ensure_airport_columns()  # debe correr ANTES de cualquier Airport.query.*, si no esa
                                 # misma consulta ya falla porque el modelo espera is_argentina
     _ensure_aircraft_columns()
-    _ensure_admin_file_columns()
     if Airport.query.count() == 0:
         for name, (lat, lon) in COORDS.items():
             db.session.add(Airport(name=name, lat=lat, lon=lon, is_argentina=(name in ARGENTINA_NAMES)))
@@ -340,29 +486,9 @@ def _ensure_aircraft_columns():
         db.session.commit()
 
 
-def _ensure_admin_file_columns():
-    """Si la tabla admin_file ya existía (deploys previos) sin content_oid, la agrega y
-    afloja el NOT NULL de `content` -- las filas nuevas en Postgres usan Large Objects
-    (content_oid) en vez de la columna `content`, ver el docstring de AdminFile en models.py."""
-    from sqlalchemy import inspect, text
-    inspector = inspect(db.engine)
-    if 'admin_file' not in inspector.get_table_names():
-        return
-    existing_cols = {c['name'] for c in inspector.get_columns('admin_file')}
-    if 'content_oid' not in existing_cols:
-        col_type = 'OID' if db.engine.dialect.name == 'postgresql' else 'INTEGER'
-        db.session.execute(text(f'ALTER TABLE admin_file ADD COLUMN content_oid {col_type}'))
-        db.session.commit()
-    if db.engine.dialect.name == 'postgresql':
-        content_col = next((c for c in inspector.get_columns('admin_file') if c['name'] == 'content'), None)
-        if content_col and not content_col['nullable']:
-            db.session.execute(text('ALTER TABLE admin_file ALTER COLUMN content DROP NOT NULL'))
-            db.session.commit()
-
-
 @app.errorhandler(413)
 def _request_too_large(e):
-    return jsonify({"error": "El archivo es demasiado grande (máximo 100MB por request)."}), 413
+    return jsonify({"error": "El archivo es demasiado grande (máximo 25MB)."}), 413
 
 
 @app.before_request
@@ -1869,109 +1995,15 @@ def admin_fuel_sales_borrar_todo():
 # ---------- Admin: Archivos (carga/descarga momentánea de CSV/TXT/Excel) ----------
 
 ALLOWED_ADMIN_FILE_EXT = ('.csv', '.txt', '.xlsx', '.xlsm', '.zip')
-ADMIN_FILE_MAX_BYTES = 300 * 1024 * 1024
-ADMIN_FILE_USA_LARGE_OBJECTS = None  # cacheado en el primer uso, ver _admin_file_usa_lo()
-
-
-def _admin_file_usa_lo():
-    """Large Objects solo existen en Postgres -- en el SQLite local de desarrollo (fallback
-    sin DATABASE_URL) se sigue usando la columna `content` de siempre, a memoria completa,
-    porque en local no hay problema de RAM ni tiene sentido montar la infraestructura de LO."""
-    global ADMIN_FILE_USA_LARGE_OBJECTS
-    if ADMIN_FILE_USA_LARGE_OBJECTS is None:
-        ADMIN_FILE_USA_LARGE_OBJECTS = (db.engine.dialect.name == 'postgresql')
-    return ADMIN_FILE_USA_LARGE_OBJECTS
-
-
-def _pg_lo_escribir_desde_archivo(path):
-    """Vuelca un archivo en disco a un Large Object de Postgres, leyéndolo de a 1MB por vez
-    -- nunca lo tiene entero en RAM, a diferencia de guardarlo como bytea. Devuelve el OID
-    del objeto creado. Usa una conexión cruda (raw_connection) separada de la sesión del
-    ORM porque la API de Large Objects de psycopg2 no pasa por el `Session` de SQLAlchemy."""
-    raw = db.engine.raw_connection()
-    try:
-        pg_conn = raw.driver_connection
-        lo = pg_conn.lobject(0, 'wb')
-        try:
-            with open(path, 'rb') as fh:
-                while True:
-                    bloque = fh.read(1024 * 1024)
-                    if not bloque:
-                        break
-                    lo.write(bloque)
-        finally:
-            lo.close()
-        oid = lo.oid
-        pg_conn.commit()
-        return oid
-    except Exception:
-        raw.rollback()
-        raise
-    finally:
-        raw.close()
-
-
-def _pg_lo_leer_stream(oid, chunk_size=1024 * 1024):
-    """Generador que va leyendo un Large Object de a pedazos, para poder devolverlo como
-    respuesta streameada sin cargarlo entero en RAM."""
-    raw = db.engine.raw_connection()
-    try:
-        pg_conn = raw.driver_connection
-        lo = pg_conn.lobject(oid, 'rb')
-        try:
-            while True:
-                bloque = lo.read(chunk_size)
-                if not bloque:
-                    break
-                yield bloque
-        finally:
-            lo.close()
-        pg_conn.commit()
-    finally:
-        raw.close()
-
-
-def _pg_lo_borrar(oid):
-    """Borra un Large Object para que no quede ocupando espacio en Neon aunque ya se haya
-    borrado la fila de AdminFile que lo referenciaba -- si no se hace esto, "borrar TODOS
-    los archivos" desde /admin limpiaría la tabla pero no liberaría el espacio real."""
-    if not oid:
-        return
-    raw = db.engine.raw_connection()
-    try:
-        pg_conn = raw.driver_connection
-        lo = pg_conn.lobject(oid, 'n')
-        lo.unlink()
-        pg_conn.commit()
-    except Exception:
-        raw.rollback()
-        app.logger.exception("No se pudo borrar el large object %s", oid)
-    finally:
-        raw.close()
-
-
-def _admin_file_guardar(safe_name, content_type, path_o_bytes):
-    """Crea un AdminFile a partir de un archivo en disco (path, string) o de bytes ya en
-    memoria (para el caso SQLite/local, donde no hay Large Objects). En Postgres nunca pasa
-    el archivo entero por RAM: lo streamea directo a un Large Object."""
-    if _admin_file_usa_lo() and isinstance(path_o_bytes, str):
-        size_bytes = os.path.getsize(path_o_bytes)
-        oid = _pg_lo_escribir_desde_archivo(path_o_bytes)
-        return AdminFile(filename=safe_name, content_type=content_type,
-                          size_bytes=size_bytes, content_oid=oid)
-    data = path_o_bytes if isinstance(path_o_bytes, (bytes, bytearray)) else open(path_o_bytes, 'rb').read()
-    return AdminFile(filename=safe_name, content_type=content_type,
-                      size_bytes=len(data), content=bytes(data))
 
 
 @app.route('/admin/archivos/subir', methods=['POST'])
 @limiter.limit("20 per minute")
 def admin_archivos_subir():
-    """Guarda cualquier CSV/TXT/Excel/ZIP en la base tal cual, sin procesarlo ni leerlo --
-    es solo para poder bajarlo después desde otra máquina. Se guarda en Postgres (Neon) y no
-    en el disco de Render, porque el filesystem del free tier es efímero y no sobrevive a un
-    redeploy o restart. Pensado para archivos chicos que entran en un solo request; para
-    archivos grandes el frontend usa /admin/archivos/subir_chunk."""
+    """Guarda cualquier CSV/TXT/Excel en la base tal cual, sin procesarlo ni leerlo -- es
+    solo para poder bajarlo después desde otra máquina. Se guarda en Postgres (Neon) y no en
+    el disco de Render, porque el filesystem del free tier es efímero y no sobrevive a un
+    redeploy o restart."""
     if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
 
@@ -1988,11 +2020,19 @@ def admin_archivos_subir():
             continue
         safe_name = secure_filename(f.filename) or 'archivo'
         data = f.read()
-        db.session.add(_admin_file_guardar(safe_name, f.mimetype, data))
+        db.session.add(AdminFile(
+            filename=safe_name,
+            content_type=f.mimetype,
+            size_bytes=len(data),
+            content=data,
+        ))
         subidos.append(safe_name)
 
     db.session.commit()
     return jsonify({"ok": True, "subidos": subidos, "errores": errores})
+
+
+ADMIN_FILE_MAX_BYTES = 100 * 1024 * 1024
 
 
 @app.route('/admin/archivos/subir_chunk', methods=['POST'])
@@ -2041,7 +2081,7 @@ def admin_archivos_subir_chunk():
     tam_actual = os.path.getsize(temp_path)
     if tam_actual > ADMIN_FILE_MAX_BYTES:
         os.remove(temp_path)
-        return jsonify({"error": f"El archivo supera el máximo de {ADMIN_FILE_MAX_BYTES // (1024*1024)}MB"}), 400
+        return jsonify({"error": "El archivo supera el máximo de 100MB"}), 400
 
     if chunk_index < total_chunks - 1:
         gc.collect()
@@ -2051,14 +2091,20 @@ def admin_archivos_subir_chunk():
     del chunk
     gc.collect()  # libera lo que haya quedado de los chunks anteriores antes del pico final
 
-    # En Postgres, _admin_file_guardar streamea temp_path directo a un Large Object (nunca
-    # carga el archivo entero en RAM); en el SQLite local sí lo lee entero, pero ese caso
-    # nunca maneja archivos de este tamaño en la práctica.
-    safe_name = secure_filename(filename) or 'archivo'
-    db.session.add(_admin_file_guardar(safe_name, content_type, temp_path))
-    db.session.commit()
+    with open(temp_path, 'rb') as fh:
+        data = fh.read()
     os.remove(temp_path)
-    gc.collect()
+
+    safe_name = secure_filename(filename) or 'archivo'
+    db.session.add(AdminFile(
+        filename=safe_name,
+        content_type=content_type,
+        size_bytes=len(data),
+        content=data,
+    ))
+    db.session.commit()
+    del data
+    gc.collect()  # el worker es de larga vida (1 solo worker); no dejar los 60MB colgando
     return jsonify({"ok": True, "done": True, "filename": safe_name})
 
 
@@ -2067,13 +2113,6 @@ def admin_archivos_descargar(file_id):
     if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
     af = AdminFile.query.get_or_404(file_id)
-    if af.content_oid:
-        # Streameado de a 1MB desde el Large Object -- nunca carga el archivo entero en RAM,
-        # a diferencia de las filas viejas guardadas en `content` (bytea).
-        respuesta = Response(_pg_lo_leer_stream(af.content_oid), mimetype=af.content_type or 'text/plain')
-        respuesta.headers['Content-Disposition'] = f'attachment; filename="{af.filename}"'
-        respuesta.headers['Content-Length'] = str(af.size_bytes)
-        return respuesta
     return send_file(
         io.BytesIO(af.content),
         mimetype=af.content_type or 'text/plain',
@@ -2088,10 +2127,8 @@ def admin_archivos_borrar(file_id):
     if nivel_actual() < 2:
         return jsonify({"error": "No autorizado"}), 401
     af = AdminFile.query.get_or_404(file_id)
-    oid = af.content_oid
     db.session.delete(af)
     db.session.commit()
-    _pg_lo_borrar(oid)
     return jsonify({"ok": True, "deleted": file_id})
 
 
@@ -2105,12 +2142,8 @@ def admin_archivos_borrar_todo():
     data = request.get_json(silent=True) or {}
     if data.get('confirmar') != 'BORRAR':
         return jsonify({"error": "Falta la confirmación. Mandá {'confirmar': 'BORRAR'}."}), 400
-    oids = [oid for (oid,) in db.session.query(AdminFile.content_oid)
-            .filter(AdminFile.content_oid.isnot(None)).all()]
     borrados = AdminFile.query.delete()
     db.session.commit()
-    for oid in oids:
-        _pg_lo_borrar(oid)
     return jsonify({"ok": True, "borrados": borrados})
 
 
