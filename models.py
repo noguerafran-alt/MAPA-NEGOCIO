@@ -334,16 +334,23 @@ class FuelSaleUploadLog(db.Model):
     warnings = db.Column(db.Text)
     
 class AdminFile(db.Model):
-    """Archivos sueltos (CSV/TXT) subidos desde /admin solo para guardarlos y poder
-    bajarlos después desde otra máquina -- no se procesan ni se leen para nada, es un
-    simple guardado/descarga. Se guardan en la base (no en disco): el filesystem de
-    Render free tier es efímero y no sobrevive a un redeploy."""
+    """Archivos sueltos (CSV/TXT/Excel/ZIP) subidos desde /admin solo para guardarlos y
+    poder bajarlos después desde otra máquina -- no se procesan ni se leen para nada, es un
+    simple guardado/descarga. Se guardan en la base (no en disco): el filesystem de Render
+    free tier es efímero y no sobrevive a un redeploy.
+
+    En Postgres (producción/Neon) el contenido se guarda como Large Object (content_oid
+    apunta al OID) en vez de en la columna `content`: así se escribe/lee de a pedazos sin
+    tener nunca el archivo entero en RAM, algo necesario porque el plan barato de Render
+    tiene solo 512MB. `content` queda solo para filas viejas (de antes de este cambio) y
+    para el fallback en SQLite local, que no tiene Large Objects."""
     __tablename__ = 'admin_file'
     id = db.Column(db.Integer, primary_key=True)
     filename = db.Column(db.String(255), nullable=False)
     content_type = db.Column(db.String(100))
     size_bytes = db.Column(db.Integer, nullable=False)
-    content = db.Column(db.LargeBinary, nullable=False)
+    content = db.Column(db.LargeBinary, nullable=True)
+    content_oid = db.Column(db.Integer, nullable=True)
     uploaded_at = db.Column(db.DateTime, server_default=db.func.now())
 
 class AirportAlias(db.Model):
