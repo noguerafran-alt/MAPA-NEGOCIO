@@ -1923,6 +1923,10 @@ function selectAllMonths() {
   📊 Aerolíneas
 </a>
 
+<a id="noticias-link" href="/noticias" style="position: fixed; bottom: 12px; font-size: 11px; color: #9aa4c7; background: rgba(16,22,46,0.88); backdrop-filter: blur(6px); border: 1px solid #2a3358; border-radius: 8px; padding: 6px 12px; text-decoration: none; visibility: hidden;">
+  Noticias
+</a>
+
 <a id="logout-link" href="/logout" style="position: fixed; bottom: 12px; font-size: 11px; color: #9aa4c7; background: rgba(16,22,46,0.88); backdrop-filter: blur(6px); border: 1px solid #2a3358; border-radius: 8px; padding: 6px 12px; text-decoration: none; visibility: hidden;">
   ⏻ Salir
 </a>
@@ -1932,16 +1936,17 @@ function selectAllMonths() {
 </div>
 
 <script>
-  // Encadenar de derecha a izquierda: Crédito -> Proyecciones -> Aerolíneas -> Admin -> Salir,
+  // Encadenar de derecha a izquierda: Crédito -> Proyecciones -> Aerolíneas -> Noticias -> Admin -> Salir,
   // cada uno usando el ancho real del anterior (varía según fuente/zoom) en vez de valores
   // fijos a ojo.
   function positionAdminLink() {
     const credit = document.getElementById('credit');
     const proyeccionesLink = document.getElementById('proyecciones-link');
     const aerolineasLink = document.getElementById('aerolineas-link');
+    const noticiasLink = document.getElementById('noticias-link');
     const adminLink = document.getElementById('admin-link');
     const logoutLink = document.getElementById('logout-link');
-    if (!credit || !proyeccionesLink || !aerolineasLink || !adminLink || !logoutLink) return;
+    if (!credit || !proyeccionesLink || !aerolineasLink || !noticiasLink || !adminLink || !logoutLink) return;
 
     const creditWidth = credit.getBoundingClientRect().width;
     const proyeccionesRight = 12 + creditWidth + 8;
@@ -1954,7 +1959,12 @@ function selectAllMonths() {
     aerolineasLink.style.visibility = 'visible';
 
     const aerolineasWidth = aerolineasLink.getBoundingClientRect().width;
-    const adminRight = aerolineasRight + aerolineasWidth + 8;
+    const noticiasRight = aerolineasRight + aerolineasWidth + 8;
+    noticiasLink.style.right = noticiasRight + 'px';
+    noticiasLink.style.visibility = 'visible';
+
+    const noticiasWidth = noticiasLink.getBoundingClientRect().width;
+    const adminRight = noticiasRight + noticiasWidth + 8;
     adminLink.style.right = adminRight + 'px';
     adminLink.style.visibility = 'visible';
 
