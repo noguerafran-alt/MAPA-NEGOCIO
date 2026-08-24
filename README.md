@@ -6,8 +6,10 @@ ruta, a partir de las planillas "series históricas" de ANAC.
 
 ## Uso
 
-- `/` — el mapa, `/proyecciones` y `/aerolineas` — requieren estar logueado
-  con una cuenta de Google autorizada (nivel 1 o más).
+- `/` — el mapa, `/proyecciones`, `/aerolineas` y `/modelo` — requieren estar
+  logueado con una cuenta de Google autorizada (nivel 1 o más).
+- `/modelo` — explica cómo se arma la proyección de tráfico que llena los
+  períodos futuros del mapa, con las cifras del backtest.
 - `/admin` — panel de administración; requiere nivel 2 o más. Los
   precios/ingresos de combustible también se desbloquean recién en nivel 2.
 - `/admin` → sección **Usuarios** — dar de alta o editar cuentas; sólo
@@ -64,6 +66,55 @@ flask migrar-de-neon
 Si venís de una versión anterior con `ADMIN_PASSWORD`/`MAP_PASSWORD`/
 `FUEL_PASSWORD`: esas tres variables ya no se usan. Corré el paso 4 antes de
 que se pierda el acceso, y después podés borrarlas del dashboard de Render.
+
+## Proyección de tráfico (opcional)
+
+El mapa puede mostrar **12 meses hacia adelante**: `proyeccion_forecast.py`
+estima vuelos y pasajeros por ruta y los inyecta en `/api/data` como períodos
+más. No proyecta combustible — el mapa ya sabe pasar de vuelos+pasajeros a m³
+(elige avión por ocupación y multiplica por el consumo por vuelo), así que toda
+la cadena de consumo se calcula sola río abajo.
+
+El método está explicado para el usuario en `/modelo`. En resumen: un modelo
+global LightGBM que no predice el nivel sino la **corrección sobre el naive
+estacional** (el mismo mes del año anterior), porque los árboles no extrapolan.
+Mejora al naive de forma real pero moderada — MASE mediano 1.06 contra 1.11 en
+pasajeros y 0.98 contra 1.04 en vuelos: sirve para dimensionar, no para
+comprometer volumen contractual.
+
+```
+proyeccion_datos.py     empalma historical_2001_2022.json con route_monthly
+                        (el JSON trae los pasajeros en MILES, la base en unidades)
+proyeccion_modelo.py    features, modelo y backtest contra baselines
+proyeccion_forecast.py  filas listas para /api/data, con caché en memoria
+templates/modelo.html   la explicación que ve el usuario
+```
+
+**Las dependencias no están en `requirements.txt` a propósito.** El import está
+guardado: sin `pandas` + `lightgbm` la app arranca igual y el mapa funciona
+completo, sólo que sin períodos futuros. Medido en local con la base de
+desarrollo:
+
+| | sin proyección | con proyección |
+|---|---|---|
+| RSS después de `/api/data` | ~135 MB | ~284 MB (pico 377 MB) |
+| primer `/api/data` | ~1 s | ~13 s (entrena los dos modelos) |
+| llamadas siguientes | ~1 s | ~1 s (caché en memoria) |
+
+En una instancia de 512 MB eso deja poco margen, que es justo el problema que
+ya provocó 502 en `/admin`. Para activarla en Render hay que agregar
+`pandas` y `lightgbm` a `requirements.txt` y subir el plan de la instancia; si
+después aparecen 502, sacarlas alcanza para volver atrás sin tocar nada más.
+
+El caché se invalida solo: la clave incluye el último período cargado y la
+cantidad de filas con dato, así que subir una planilla nueva desde `/admin`
+fuerza el reentrenamiento sin que haya que acordarse de limpiarlo.
+
+Para medir de nuevo el backtest (tarda varios minutos, no entra en un request):
+
+```
+python proyeccion_modelo.py
+```
 
 ## Actualizar datos más adelante
 

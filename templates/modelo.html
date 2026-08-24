@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cómo se proyecta — Mapa de Rutas</title>
+<style>
+  body { font-family: Arial, sans-serif; background: #0b1020; color: #eee; margin: 0; padding: 24px; }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 6px 0 4px; }
+  h2 { font-size: 15px; color: #9aa4c7; border-bottom: 1px solid #2a3358; padding-bottom: 8px; margin-top: 32px; }
+  a.back { color: #9aa4c7; font-size: 12px; text-decoration: none; }
+  a.back:hover { text-decoration: underline; }
+  .sub { color: #9aa4c7; font-size: 13px; margin: 0 0 16px; }
+  .card { background: #10162e; border: 1px solid #2a3358; border-radius: 12px; padding: 18px 22px; margin-bottom: 18px; }
+  p { font-size: 13.5px; line-height: 1.65; color: #d6dbef; }
+  li { font-size: 13.5px; line-height: 1.7; color: #d6dbef; }
+  strong { color: #fff; }
+  code { background: #0b1020; border: 1px solid #2a3358; border-radius: 5px;
+         padding: 1px 6px; font-size: 12.5px; color: #ffd9a0; }
+
+  /* chips de estado actual */
+  .chips { display: flex; flex-wrap: wrap; gap: 10px; }
+  .chip { background: #0b1020; border: 1px solid #2a3358; border-radius: 9px; padding: 9px 14px; }
+  .chip .k { display: block; font-size: 10.5px; color: #7c86ab; text-transform: uppercase;
+             letter-spacing: .4px; margin-bottom: 3px; }
+  .chip .v { font-size: 15px; color: #fff; font-weight: bold; }
+
+  /* la formula */
+  .formula { display: flex; align-items: stretch; gap: 10px; flex-wrap: wrap; margin: 6px 0 14px; }
+  .term { flex: 1 1 200px; border-radius: 10px; padding: 13px 15px; }
+  .term .t { font-size: 11px; text-transform: uppercase; letter-spacing: .4px; margin-bottom: 5px; }
+  .term .d { font-size: 12.5px; line-height: 1.5; }
+  .t-ancla { background: rgba(60,80,140,0.28); border: 1px solid #4a5ea0; }
+  .t-ancla .t { color: #9fb4f0; } .t-ancla .d { color: #cfd8f5; }
+  .t-ml { background: rgba(90,60,10,0.32); border: 1px solid #b98b2a; }
+  .t-ml .t { color: #ffd98a; } .t-ml .d { color: #f0e0bd; }
+  .op { align-self: center; font-size: 20px; color: #7c86ab; padding: 0 2px; }
+
+  table { border-collapse: collapse; width: 100%; margin-top: 6px; font-size: 13px; }
+  th, td { border-bottom: 1px solid #2a3358; padding: 8px 10px; text-align: left; }
+  th { color: #9aa4c7; font-weight: normal; font-size: 12px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .mejor { color: #8fe3a2; font-weight: bold; }
+  .peor { color: #ff9a9a; }
+  .nota { font-size: 12px; color: #7c86ab; margin-top: 10px; line-height: 1.6; }
+
+  .aviso { background: rgba(60,44,10,0.5); border: 1px solid #b98b2a; border-radius: 10px;
+           padding: 14px 18px; margin-bottom: 18px; }
+  .aviso p { color: #ffd98a; margin: 0; }
+  .marca { display: inline-block; background: #0b1020; border: 1px solid #2a3358;
+           border-radius: 6px; padding: 2px 8px; font-size: 12px; color: #ffd9a0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<a class="back" href="/">← Volver al mapa</a>
+<h1>Cómo se proyecta</h1>
+<p class="sub">Qué hace el modelo que llena los períodos futuros del mapa, qué tan
+preciso es, y dónde no hay que confiarle.</p>
+
+{% if not disponible %}
+<div class="aviso">
+  <p><strong>La proyección no está activa en esta instancia.</strong>
+  Faltan las dependencias (pandas, numpy, lightgbm, scikit-learn), que no están en
+  <code>requirements.txt</code> a propósito. El mapa funciona igual, sólo que sin
+  períodos futuros.</p>
+</div>
+{% else %}
+
+<div class="card">
+  <div class="chips">
+    <div class="chip"><span class="k">Últimos datos reales</span><span class="v">{{ ultimo_real }}</span></div>
+    <div class="chip"><span class="k">Períodos proyectados</span><span class="v">{{ desde }} → {{ hasta }}</span></div>
+    <div class="chip"><span class="k">Rutas proyectadas</span><span class="v">{{ n_rutas }}</span></div>
+    <div class="chip"><span class="k">Rutas en el panel</span><span class="v">{{ n_rutas_total }}</span></div>
+    <div class="chip"><span class="k">Filas ruta-mes</span><span class="v">{{ n_filas }}</span></div>
+  </div>
+</div>
+{% endif %}
+
+<h2>Qué se proyecta — y qué no</h2>
+<div class="card">
+  <p>Se proyectan <strong>vuelos y pasajeros por ruta</strong>, mes a mes, hasta 12 meses
+  hacia adelante. Nada más.</p>
+
+  <p><strong>El combustible no se proyecta: se deriva.</strong> El mapa ya sabía convertir
+  vuelos y pasajeros en metros cúbicos — elige el avión según la ocupación de cada mes y
+  multiplica por el consumo por vuelo de ese tipo. Los m³ que ves en un período futuro
+  salen de aplicar exactamente esa misma cadena a los vuelos proyectados. No hay un
+  segundo modelo estimando litros: hay uno solo estimando tráfico.</p>
+
+  <p>Sólo entran las rutas <strong>activas en los últimos 12 meses</strong>. Sin ese filtro
+  el modelo revive rutas muertas — las de El Palomar, por ejemplo — y el mapa dibujaría
+  tráfico que no va a existir.</p>
+</div>
+
+<h2>Cómo funciona</h2>
+<div class="card">
+  <p>El modelo es <strong>LightGBM</strong> (gradient boosting sobre árboles de decisión),
+  entrenado sobre todas las rutas juntas, no una por ruta. Pero conviene ver qué predice
+  exactamente, porque es menos de lo que suena:</p>
+
+  <div class="formula">
+    <div class="term t-ancla">
+      <div class="t">Ancla</div>
+      <div class="d">El mismo mes del año anterior, en esa misma ruta. Es la parte
+      grande del número.</div>
+    </div>
+    <div class="op">×</div>
+    <div class="term t-ml">
+      <div class="t">Corrección del modelo</div>
+      <div class="d">Cuánto se va a desviar respecto de ese mes espejo. Es lo único
+      que aporta el machine learning.</div>
+    </div>
+  </div>
+
+  <p>O sea: el ancla es el naive estacional de toda la vida, y el ML corrige. Está
+  diseñado así a propósito. Los árboles <strong>no extrapolan</strong>: fuera del rango que
+  vieron en entrenamiento predicen una constante, así que un modelo entrenado sobre
+  pasajeros absolutos topearía en el máximo histórico de cada ruta y nunca proyectaría
+  crecimiento. Prediciendo el <em>ratio</em> en vez del nivel, ese techo desaparece.</p>
+
+  <p>Para decidir la corrección el modelo mira, de cada ruta: el crecimiento interanual
+  reciente, la forma de su estacionalidad, el nivel de tráfico, la volatilidad, hace
+  cuánto existe y a cuántos meses de distancia está la predicción.</p>
+</div>
+
+<h2>Qué tan preciso es</h2>
+<div class="card">
+  <p>Medido con backtest sobre <strong>18 ventanas anuales</strong>: se entrena sólo con
+  datos anteriores a cada ventana y se predicen los 12 meses siguientes, como si fuera
+  en vivo. La métrica es <strong>MASE</strong> — el error dividido por el que comete
+  repetir el año anterior. Menos de 1 es mejor que ese piso.</p>
+
+  <table>
+    <tr>
+      <th>Método</th>
+      <th class="num">Pasajeros</th>
+      <th class="num">Vuelos</th>
+      <th>Qué es</th>
+    </tr>
+    <tr>
+      <td>Naive estacional</td>
+      <td class="num">1.11</td>
+      <td class="num">1.04</td>
+      <td>Repetir el mismo mes del año pasado</td>
+    </tr>
+    <tr>
+      <td>Naive × crecimiento</td>
+      <td class="num peor">1.40</td>
+      <td class="num peor">1.41</td>
+      <td>Repetir el año pasado, ajustado por el crecimiento de la ruta</td>
+    </tr>
+    <tr>
+      <td><strong>LightGBM</strong> (el que corre)</td>
+      <td class="num mejor">1.06</td>
+      <td class="num mejor">0.98</td>
+      <td>Ancla + corrección aprendida</td>
+    </tr>
+  </table>
+
+  <p class="nota">Medido el 24/08/2026. Para volver a medirlo:
+  <code>python proyeccion_modelo.py</code></p>
+
+  <p style="margin-top:16px">Traducido: el modelo le gana al naive estacional por
+  <strong>4% en pasajeros y 6,4% en vuelos</strong>, y gana en 13 de 18 ventanas (14 de 18
+  en vuelos). Es una mejora real y consistente, pero <strong>moderada</strong>. Sirve para
+  dimensionar; no para comprometer volumen contractual.</p>
+
+  <p>El dato más útil de la tabla es el del medio: ajustar por el crecimiento de la ruta
+  <strong>empeora</strong> la proyección un 35%, sistemáticamente, en 20 años de datos.
+  En estas rutas el impulso no persiste — la intuición de "esta ruta viene creciendo, va
+  a seguir creciendo" está medida, y es falsa.</p>
+</div>
+
+<h2>Dónde falla y dónde se luce</h2>
+<div class="card">
+  <p><strong>Falla en los quiebres estructurales.</strong> En 2017-2019, con el boom y la
+  caída de las low-cost, el modelo pierde contra el naive: aprendió relaciones de un
+  régimen y las aplicó a otro. Un árbol promedia regímenes, no identifica en cuál está
+  parado.</p>
+
+  <p><strong>Se luce cuando una ruta cambia de régimen recientemente.</strong> Dos casos
+  reales de la proyección que está cargada hoy:</p>
+  <ul>
+    <li><strong>Córdoba–Asunción</strong>: venía de ~35 vuelos por mes y cayó a 1-3 desde
+    abril. El modelo proyecta 3. El naive estacional habría dicho 29.</li>
+    <li><strong>Ezeiza–Recife</strong>: de 75 vuelos en marzo a 7 en julio. El modelo
+    proyecta 7. El naive habría dicho 35.</li>
+  </ul>
+
+  <p><strong>2020-2021 está excluido</strong> del entrenamiento y de la medición. No sólo
+  como resultado a predecir: también como referencia. En diciembre de 2022 el crecimiento
+  interanual de las rutas daba <strong>+207% mediano</strong>, que no es demanda creciendo
+  sino el rebote contra el piso de 2021. Usado como señal, el error de 2023 se triplicaba.</p>
+
+  <p>De ahí sale una regla de seguridad: <strong>si una ruta no tiene una referencia
+  interanual válida, el modelo no corrige nada</strong> y se devuelve el mes espejo tal
+  cual. Sin esa regla el error de 2023 se multiplicaba por 6. Es preferible responder
+  "lo mismo que el año pasado" a inventar una corrección a ciegas.</p>
+</div>
+
+<h2>Cómo leerlo en el mapa</h2>
+<div class="card">
+  <p>Un período proyectado se marca de tres formas a la vez, para que no se confunda con
+  un dato de ANAC:</p>
+  <ul>
+    <li>Un <span class="marca">aviso ámbar</span> arriba, debajo de los selectores</li>
+    <li>Las rutas se dibujan con <strong>línea punteada</strong> en vez de sólida</li>
+    <li>El tooltip de cada ruta arranca con <span class="marca">◇ PROYECTADO</span></li>
+  </ul>
+
+  <p>El total de abajo cambia de rótulo según el caso: <code>m³ estimados</code> para
+  períodos reales, <code>m³ proyectados</code> para futuro, y
+  <code>m³ (real + proyectado)</code> si la selección mezcla los dos — ese último caso es
+  el más fácil de leer mal, porque el número suma meses medidos con meses estimados y no
+  hay forma de notarlo mirándolo.</p>
+
+  <p>Los meses fuera del horizonte de 12 meses no tienen filas y suman cero. Si elegís
+  uno, el aviso te lo dice en vez de dejarte creer que esas rutas dejaron de volar.</p>
+</div>
+
+<h2>De dónde salen los datos</h2>
+<div class="card">
+  <ul>
+    <li><strong>2001-2022</strong> — <code>historical_2001_2022.json</code>, del scrapeo
+    de las series históricas de ANAC. Los pasajeros vienen en miles y hay que convertirlos:
+    empalmar sin corregir mete un salto de ×1000 en el corte 2022/2023.</li>
+    <li><strong>2023 en adelante</strong> — las planillas que subís por <code>/admin</code>.
+    En ~18% de las filas ANAC informa vuelos pero no pasajeros; ésas quedan sin dato, no
+    en cero.</li>
+  </ul>
+  <p class="nota">La proyección se recalcula sola cuando subís una planilla nueva: el
+  caché se invalida con el último período cargado.</p>
+</div>
+
+<p style="margin: 26px 0 40px"><a class="back" href="/">← Volver al mapa</a></p>
+
+</div>
+</body>
+</html>

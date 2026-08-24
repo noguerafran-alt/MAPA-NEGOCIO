@@ -56,6 +56,21 @@
     padding: 8px 14px; color: #9aa4c7; font-size: 12px;
   }
 
+  /* Aviso de proyección. Va arriba y en ámbar, no abajo con el resto de los datos:
+     confundir una estimación del modelo con un despacho real de ANAC es el único
+     error de esta pantalla que se puede llevar puesta una decisión comercial. */
+  #proy-warning {
+    /* Debajo de la barra de controles (top:14px, ~40px de alto), no encima: centrado a
+       top:14px quedaba pisando los selectores de Año y Mes justo cuando el usuario los
+       está usando, que es el único momento en que este aviso importa. */
+    position: fixed; top: 66px; left: 50%; transform: translateX(-50%);
+    z-index: 20; display: none; max-width: 620px;
+    background: rgba(60,44,10,0.94); backdrop-filter: blur(6px);
+    border: 1px solid #b98b2a; border-radius: 10px;
+    padding: 8px 16px; color: #ffd98a; font-size: 12.5px; text-align: center;
+  }
+  #proy-warning b { color: #ffe9b8; }
+
   #fuel-diag-warning {
     position: fixed; bottom: 52px; left: 14px; z-index: 10; max-width: 480px;
     background: rgba(59,40,10,0.92); backdrop-filter: blur(6px);
@@ -265,6 +280,7 @@
   </div>
 </div>
 
+<div id="proy-warning"></div>
 <div id="stats"></div>
 <div id="fuel-diag-warning" onclick="window.open('/admin', '_blank')" title="Click para abrir /admin y agregar el alias"></div>
 
@@ -397,8 +413,43 @@ function colorForRoute(routeKey) {
 
 let selectedYears = new Set(); // multi-year selection
 
+// Períodos que son estimación del modelo y no medición de ANAC.
+let PERIODOS_PROY = new Set();
+
+function esPeriodoProyectado(year, month) {
+  return PERIODOS_PROY.has(`${year}-${month}`);
+}
+
+function periodoTieneDatos(year, month) {
+  const ym = `${year}-${month}`;
+  return ((DATA.cabotaje.data[ym] || []).length +
+          (DATA.internacional.data[ym] || []).length) > 0;
+}
+
+// Clasifica los períodos que se están mirando en tres grupos, no dos. Un mes que no
+// es proyección NO es automáticamente real: puede estar más allá del horizonte de 12
+// meses del modelo (dic-2027, por ejemplo) y no tener ninguna fila. Contarlo como
+// "real" hacía aparecer el aviso de período mixto cuando en realidad no había nada
+// que mezclar — sólo un mes vacío sumando cero.
+function conteoProyectado(years, months) {
+  let proy = 0, real = 0, vacios = 0;
+  for (const y of years) for (const m of months) {
+    if (esPeriodoProyectado(y, m)) proy++;
+    else if (periodoTieneDatos(y, m)) real++;
+    else vacios++;
+  }
+  return { proy, real, vacios };
+}
+
+function ultimoAnioReal() {
+  const conDatos = DATA.years.filter(y => (DATA.year_months[y] || []).length > 0);
+  return conDatos.length ? conDatos[conDatos.length - 1]
+                         : DATA.years[DATA.years.length - 1];
+}
+
 fetch('/api/data').then(r => r.json()).then(d => {
   DATA = d;
+  PERIODOS_PROY = new Set(d.periodos_proyectados || []);
   if (d.modelo_params) MODELO = Object.assign({}, MODELO, d.modelo_params);
   // Marcador de versión: si el subtítulo no muestra "v2", lo que está corriendo es la build
   // anterior. Si aparece en rojo, los JSON del modelo no llegaron al servidor.
@@ -411,7 +462,9 @@ fetch('/api/data').then(r => r.json()).then(d => {
         ok ? `${md.tipos_en_flota} tipos de avión · ${md.rutas_con_consumo_real} rutas con consumo real`
            : 'Faltan flota.json y/o consumo_rutas.json en el servidor'}">${d.version}</span>`;
   }
-  selectedYears = new Set([DATA.years[DATA.years.length - 1]]);
+  // El último año de DATA.years puede ser uno puramente proyectado: el mapa tiene que
+  // abrir siempre sobre el último año con datos reales, y que el futuro se elija a mano.
+  selectedYears = new Set([ultimoAnioReal()]);
   buildYearDropdown();
   updateYearBtnLabel();
   populateMonths();
@@ -1523,12 +1576,45 @@ function recalcRouteDetail() {
     : 'N/D (sin asientos)';
 }
 
+function actualizarAvisoProyeccion({ proy, real, vacios }) {
+  const el = document.getElementById('proy-warning');
+  if (!el) return;
+  if (!proy && !vacios) { el.style.display = 'none'; return; }
+
+  el.style.display = 'block';
+  // El panel de arriba cambia de alto según cuántas filas ocupen los selectores (una
+  // sola en pantalla ancha, dos o tres si la ventana es angosta). Un top fijo lo pisa
+  // en algún ancho: se mide en cada render y el aviso se cuelga justo debajo.
+  const panel = document.getElementById('panel');
+  el.style.top = ((panel ? panel.getBoundingClientRect().bottom : 56) + 10) + 'px';
+
+  const sinDatos = vacios > 0
+    ? ` ${vacios} mes(es) elegido(s) están fuera del horizonte de proyección y suman cero.`
+    : '';
+
+  if (proy && real) {
+    // El caso peligroso: el total que se ve abajo suma meses medidos con meses
+    // estimados, y no hay forma de separarlos mirando el número.
+    el.innerHTML = '<b>⚠ Período mixto</b> — la selección mezcla ' + real +
+      ' mes(es) con datos reales y ' + proy + ' proyectado(s). Los totales de vuelos, ' +
+      'pasajeros y m³ suman las dos cosas.' + sinDatos;
+  } else if (proy) {
+    el.innerHTML = '<b>◇ Proyección</b> — estimación del modelo, no son datos de ANAC. ' +
+      'Los m³ salen de aplicar el consumo por vuelo a los vuelos proyectados.' + sinDatos;
+  } else {
+    el.innerHTML = '<b>◇ Sin datos</b> —' + sinDatos;
+  }
+}
+
 function render(skipListRebuild) {
   if (!DATA) return;
   const years = DATA.years.filter(y => selectedYears.has(y));
   const months = availableMonths().filter(m => selectedMonths.has(m));
+  const cuenta = conteoProyectado(years, months);
+  const hayProyeccion = cuenta.proy > 0;
+  actualizarAvisoProyeccion(cuenta);
   const traces = [];
-  let totalVuelos = 0, totalPax = 0, nRoutes = 0;
+  let totalVuelos = 0, totalPax = 0, nRoutes = 0, totalM3 = 0;
 
   const candidates = []; // all routes available for current type+period (unfiltered by user selection)
   if (skipListRebuild) {
@@ -1590,6 +1676,10 @@ function render(skipListRebuild) {
   for (const r of visible) {
     totalVuelos += r.vuelos;
     totalPax += (r.pax || 0);
+    // Sin factor 0.5: cada fila es una ruta direccional con sus propios vuelos, así que
+    // sumar consumo x vuelos da el combustible total quemado, sin doble conteo. (El 0.5
+    // del resumen por aeropuerto es otra cosa: ahí se reparte la carga entre las puntas.)
+    totalM3 += (r.consumoM3 || 0) * (r.vuelos || 0);
     nRoutes++;
     const { lons, lats } = geodesicPoints(r.olat, r.olon, r.dlat, r.dlon);
     const width = widthForValue(r[activeMetric], maxMetric);
@@ -1601,10 +1691,13 @@ function render(skipListRebuild) {
       mode: 'lines',
       lon: lons,
       lat: lats,
-      line: { width: width, color: routeColor },
+      // Punteado = proyección. La forma de la línea distingue el dato estimado del
+      // medido incluso cuando el usuario no está mirando el aviso de arriba.
+      line: { width: width, color: routeColor, dash: hayProyeccion ? 'dot' : 'solid' },
       opacity: isDimmed ? 0.12 : 1,
       hoverinfo: 'text',
-      text: `${r.o} → ${r.d}<br>Vuelos: ${r.vuelos.toLocaleString('es-AR')}<br>Pasajeros: ${(r.pax||0).toLocaleString('es-AR')}<br>Ocupación: ${r.ocup != null ? r.ocup : 'N/D'} pax/vuelo` +
+      text: (hayProyeccion ? `<b>◇ PROYECTADO</b><br>` : '') +
+            `${r.o} → ${r.d}<br>Vuelos: ${r.vuelos.toLocaleString('es-AR')}<br>Pasajeros: ${(r.pax||0).toLocaleString('es-AR')}<br>Ocupación: ${r.ocup != null ? r.ocup : 'N/D'} pax/vuelo` +
             (r.avion ? `<br>Avión asignado: ${r.avion} (${r.asientos||0} asientos)` +
               (r.loadFactor != null ? ` — ${(r.loadFactor*100).toLocaleString('es-AR',{maximumFractionDigits:0})}% de ocupación` : '') +
               `<br>Consumo est./vuelo: ${(r.consumoKg||0).toLocaleString('es-AR',{maximumFractionDigits:0})} kg (${(r.consumoM3||0).toLocaleString('es-AR',{maximumFractionDigits:2})} m³)` +
@@ -1805,8 +1898,19 @@ function render(skipListRebuild) {
 
   const yearsLabel = years.length === 1 ? years[0] : (years.length + ' años (' + years.join(', ') + ')');
   const monthsLabel = months.length === 1 ? months[0] : (months.length + ' meses (' + months.join(', ') + ')');
+  // El m³ es el número por el que se mira este mapa, así que va en el total junto con
+  // vuelos y pasajeros, y no sólo cuando se filtra por aeropuerto. Cuando el período es
+  // proyectado se rotula distinto: el volumen es tan estimado como los vuelos de los
+  // que sale, y el rótulo tiene que decirlo sin que haya que mirar el aviso de arriba.
+  // Tres rótulos, no dos: en un período mixto el total no es "proyectado" — es una suma
+  // de meses medidos y meses estimados, y llamarla proyección la subvalúa tanto como
+  // llamarla real la sobrevalúa.
+  const m3Sufijo = (cuenta.proy && cuenta.real) ? 'm³ (real + proyectado)'
+                 : cuenta.proy ? 'm³ proyectados'
+                 : 'm³ estimados';
+  const m3Label = `${totalM3.toLocaleString('es-AR', {maximumFractionDigits: 0})} ${m3Sufijo}`;
   const aggregateStats =
-    `${monthsLabel} ${yearsLabel} — ${nRoutes} rutas · ${totalVuelos.toLocaleString('es-AR')} vuelos · ${totalPax.toLocaleString('es-AR')} pasajeros · grosor = ${METRIC_LABELS[activeMetric]}`;
+    `${monthsLabel} ${yearsLabel} — ${nRoutes} rutas · ${totalVuelos.toLocaleString('es-AR')} vuelos · ${totalPax.toLocaleString('es-AR')} pasajeros · ${m3Label} · grosor = ${METRIC_LABELS[activeMetric]}`;
 
   if (airportFilterMode === 'none') {
     document.getElementById('stats').textContent = 'Ningún aeropuerto seleccionado (elegí uno o más, o "Todos")';
@@ -1827,7 +1931,7 @@ function render(skipListRebuild) {
       ? [...selectedAirports][0]
       : `${selectedAirports.size} aeropuertos seleccionados`;
     document.getElementById('stats').textContent =
-      `${label} — ${rows.length} rutas · ${nVuelos.toLocaleString('es-AR')} vuelos · ${nPax.toLocaleString('es-AR')} pasajeros · ${nM3.toLocaleString('es-AR', {maximumFractionDigits: 1})} m³ combustible estimado`;
+      `${label} — ${rows.length} rutas · ${nVuelos.toLocaleString('es-AR')} vuelos · ${nPax.toLocaleString('es-AR')} pasajeros · ${nM3.toLocaleString('es-AR', {maximumFractionDigits: 1})} m³ combustible ${hayProyeccion ? 'proyectado' : 'estimado'}`;
   } else {
     document.getElementById('stats').textContent = aggregateStats;
   }
@@ -1915,6 +2019,10 @@ function selectAllMonths() {
   ⚙ Admin
 </a>
 
+<a id="modelo-link" href="/modelo" style="position: fixed; bottom: 12px; font-size: 11px; color: #ffd9a0; background: rgba(16,22,46,0.88); backdrop-filter: blur(6px); border: 1px solid #6b551f; border-radius: 8px; padding: 6px 12px; text-decoration: none; visibility: hidden;">
+  ◇ Cómo se proyecta
+</a>
+
 <a id="proyecciones-link" href="/proyecciones" style="position: fixed; bottom: 12px; font-size: 11px; color: #ffd9a0; background: rgba(16,22,46,0.88); backdrop-filter: blur(6px); border: 1px solid #6b551f; border-radius: 8px; padding: 6px 12px; text-decoration: none; visibility: hidden;">
   📈 Proyecciones
 </a>
@@ -1936,20 +2044,27 @@ function selectAllMonths() {
 </div>
 
 <script>
-  // Encadenar de derecha a izquierda: Crédito -> Proyecciones -> Aerolíneas -> Noticias -> Admin -> Salir,
-  // cada uno usando el ancho real del anterior (varía según fuente/zoom) en vez de valores
-  // fijos a ojo.
+  // Encadenar de derecha a izquierda: Crédito -> Cómo se proyecta -> Proyecciones ->
+  // Aerolíneas -> Noticias -> Admin -> Salir, cada uno usando el ancho real del anterior
+  // (varía según fuente/zoom) en vez de valores fijos a ojo.
   function positionAdminLink() {
     const credit = document.getElementById('credit');
+    const modeloLink = document.getElementById('modelo-link');
     const proyeccionesLink = document.getElementById('proyecciones-link');
     const aerolineasLink = document.getElementById('aerolineas-link');
     const noticiasLink = document.getElementById('noticias-link');
     const adminLink = document.getElementById('admin-link');
     const logoutLink = document.getElementById('logout-link');
-    if (!credit || !proyeccionesLink || !aerolineasLink || !noticiasLink || !adminLink || !logoutLink) return;
+    if (!credit || !modeloLink || !proyeccionesLink || !aerolineasLink || !noticiasLink ||
+        !adminLink || !logoutLink) return;
 
     const creditWidth = credit.getBoundingClientRect().width;
-    const proyeccionesRight = 12 + creditWidth + 8;
+    const modeloRight = 12 + creditWidth + 8;
+    modeloLink.style.right = modeloRight + 'px';
+    modeloLink.style.visibility = 'visible';
+
+    const modeloWidth = modeloLink.getBoundingClientRect().width;
+    const proyeccionesRight = modeloRight + modeloWidth + 8;
     proyeccionesLink.style.right = proyeccionesRight + 'px';
     proyeccionesLink.style.visibility = 'visible';
 

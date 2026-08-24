@@ -33,6 +33,16 @@ from parser_aerolineas import extract_report
 from geocode import COORDS, ARGENTINA_NAMES
 import avion_model
 
+# La proyección estadística es opcional a propósito: necesita pandas + lightgbm, que
+# pesan bastante más que el resto de requirements.txt. Si no están instalados el mapa
+# arranca igual, sólo que sin períodos futuros — no se rompe nada, se pierde una capa.
+try:
+    import proyeccion_forecast
+    PROYECCION_ERROR = None
+except Exception as _e:                                  # pragma: no cover
+    proyeccion_forecast = None
+    PROYECCION_ERROR = '%s: %s' % (type(_e).__name__, _e)
+
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-change-me')
 if app.secret_key == 'dev-secret-change-me' and os.environ.get('RENDER'):
@@ -125,6 +135,12 @@ if _disk_ready():
 else:
     db_url = _normalize_db_url(os.environ.get("DATABASE_URL", "sqlite:///local_dev.db")) or "sqlite:///local_dev.db"
 app.config["SQLALCHEMY_DATABASE_URI"] = db_url
+if proyeccion_forecast is not None:
+    # La proyección lee route_monthly por su cuenta (pandas, fuera del ORM), así que
+    # hay que decirle cuál base terminó usando la app: en Render es el SQLite del
+    # disco y en local el de instance/. Sin esto leería una base vacía y el mapa se
+    # quedaría sin períodos futuros sin ningún error visible.
+    proyeccion_forecast.usar_base(db_url)
 if db_url.startswith("sqlite"):
     app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
         "poolclass": NullPool,
@@ -972,7 +988,23 @@ def api_data():
                         'vuelos': 1, 'pax': None,
                     })
 
-        all_routes = hist_routes + db_routes + manual_route_rows
+        # ---- Proyección a 12 meses ----
+        # Se suma como períodos más, con la misma forma que una fila de ANAC. El mapa
+        # ya sabe pasar de vuelos+pasajeros a combustible (elige avión por ocupación y
+        # multiplica por consumo_total_kg), así que no hace falta proyectar litros: con
+        # proyectar tráfico, toda la cadena de consumo se calcula sola río abajo.
+        proyectadas, periodos_proy = [], []
+        if proyeccion_forecast is not None:
+            try:
+                proyectadas = proyeccion_forecast.rutas_proyectadas()
+                periodos_proy = proyeccion_forecast.periodos_proyectados(proyectadas)
+            except Exception as e:
+                # Una proyección que falla no puede tirar abajo el mapa: es una capa
+                # extra sobre datos que ya están completos sin ella.
+                print(f"Proyección no disponible: {type(e).__name__}: {e}", flush=True)
+                proyectadas, periodos_proy = [], []
+
+        all_routes = hist_routes + db_routes + manual_route_rows + proyectadas
         all_airport_rows = hist_airports + db_airports
 
         # ---- Pasada 1: rango de ocupación (pax por vuelo) observado en cada ruta ----
@@ -1124,7 +1156,13 @@ def api_data():
         real_yms = set()
         for r in hist_routes + db_routes:
             real_yms.add(f"{r['year']}-{r['month']}")
-        years = sorted(set(ym.split('-')[0] for ym in real_yms), key=lambda y: int(y))
+        # Los años proyectados sí entran en `years` (si no, no habría cómo seleccionarlos),
+        # pero NO en `year_months`: ese dict es el que usa lastRealTrafficMonth() en el
+        # frontend para elegir el mes por defecto, y el mapa tiene que abrir siempre
+        # parado sobre el último mes con datos reales, nunca sobre una proyección.
+        years_proy = set(ym.split('-')[0] for ym in periodos_proy)
+        years = sorted(set(ym.split('-')[0] for ym in real_yms) | years_proy,
+                       key=lambda y: int(y))
         year_months = {}
         for ym in real_yms:
             y, m = ym.split('-')
@@ -1136,6 +1174,9 @@ def api_data():
             "years": years,
             "month_order": MONTH_ORDER,
             "year_months": year_months,
+            # Períodos "AAAA-Mmm" que son estimación y no medición. El frontend los marca
+            # visualmente: un número proyectado no puede parecerse a un dato de ANAC.
+            "periodos_proyectados": periodos_proy,
             "cabotaje": {"meta": cab_meta, "data": cab_data},
             "internacional": {"meta": intl_meta, "data": intl_data},
             "nodes": {"meta": node_meta, "data": node_data},
@@ -2803,6 +2844,57 @@ def api_deploy_status():
             "0, el archivo existe pero está vacío o con el contenido equivocado."
         ),
     })
+
+
+@app.route('/modelo')
+def modelo_page():
+    """Explica cómo se arma la proyección que llena los períodos futuros del mapa.
+
+    Los números del backtest van fijos en la plantilla, con la fecha en que se midieron:
+    correrlo lleva minutos y no puede hacerse dentro de un request. Lo que sí sale en
+    vivo es el estado (hasta dónde llegan los datos reales, qué meses hay proyectados y
+    cuántas rutas), que es lo que cambia cada vez que se sube una planilla."""
+    if nivel_actual() < 1:
+        return redirect(url_for('login_page'))
+
+    ctx = {'disponible': False, 'ultimo_real': '—', 'desde': '—', 'hasta': '—',
+           'n_rutas': 0, 'n_rutas_total': 0, 'n_filas': 0}
+
+    if proyeccion_forecast is not None:
+        try:
+            panel = proyeccion_forecast.cargar_panel()
+            filas = proyeccion_forecast.rutas_proyectadas(panel)
+            periodos = proyeccion_forecast.periodos_proyectados(filas)
+
+            def _bonito(ym):
+                anio, mes = ym.split('-')
+                return '%s %s' % (mes, anio)
+
+            # periodos_proyectados devuelve orden alfabético ("2026-Ago" antes que
+            # "2026-Dic"): para mostrar el rango hay que reordenar por calendario.
+            orden = {m: i for i, m in enumerate(MONTH_ORDER)}
+            cron = sorted(periodos, key=lambda p: (int(p.split('-')[0]),
+                                                   orden.get(p.split('-')[1], 0)))
+
+            con_dato = panel[panel['pax'].notna() | panel['vuelos'].notna()]
+            t_max = int(con_dato['t'].max())
+
+            ctx.update(
+                disponible=bool(cron),
+                ultimo_real='%s %d' % (MONTH_ORDER[t_max % 12],
+                                       proyeccion_forecast.ANIO_BASE + t_max // 12),
+                desde=_bonito(cron[0]) if cron else '—',
+                hasta=_bonito(cron[-1]) if cron else '—',
+                n_rutas=len({(f['origin'], f['dest']) for f in filas}),
+                n_rutas_total=int(panel.groupby(['tipo', 'ruta']).ngroups),
+                n_filas='{:,}'.format(len(panel)).replace(',', '.'),
+            )
+        except Exception as e:
+            # La página tiene que abrir igual y decir que la proyección no está: es
+            # justamente donde el usuario va a buscar por qué el mapa no muestra futuro.
+            print(f"/modelo sin estado de proyección: {type(e).__name__}: {e}", flush=True)
+
+    return render_template('modelo.html', **ctx)
 
 
 @app.route('/proyecciones')
