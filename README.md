@@ -28,11 +28,28 @@ rechaza con "cuenta no autorizada".
 3. Copiá el **Client ID** y el **Client Secret** — van en las variables de
    entorno `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET` (paso 3 de Deploy).
 
+## Disco de Render (en vez de Neon)
+
+La app usa SQLite en el disco persistente `/var/data/mapa.db` (1 GB) cuando ese
+path existe y se puede escribir. Neon queda solo como origen para copiar una vez.
+
+1. En Render: servicio web → **Disks** → disco montado en `/var/data` (1 GB). Plan Starter o superior (el free no tiene disco persistente).
+2. Dejá `DATABASE_URL` con la URL de Neon en Environment. Opcional: copiá la misma URL a `NEON_DATABASE_URL`.
+3. Deploy. Al arrancar, si el SQLite está vacío, copia todas las tablas (incluye los archivos de `/admin`) al disco.
+4. Entrá al mapa y a `/admin` y confirmá que se ven tus datos.
+5. Recién ahí podés **borrar el servicio/base de Neon** y la variable `DATABASE_URL` de Postgres.
+
+Si la copia automática no corrió, desde el **Shell** de Render:
+
+```
+flask migrar-de-neon
+```
+
 ## Deploy en Render
 
 1. Subí este repo a GitHub.
 2. En Render: **New + → Blueprint**, elegí este repo. `render.yaml` crea
-   automáticamente la base Postgres y el servicio web.
+   el servicio web con disco persistente en `/var/data` (SQLite). Ya no usa Neon.
 3. En la pestaña **Environment** del servicio web, cargá a mano
    `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET` (salen del paso anterior).
 4. **Autorizá tu propia cuenta** desde el Shell de Render (pestaña Shell del
