@@ -18,6 +18,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.utils import secure_filename
 from sqlalchemy import func
+from sqlalchemy.orm import defer
 from authlib.integrations.flask_client import OAuth
 import openpyxl
 
@@ -1028,18 +1029,25 @@ def admin_page():
     logs = UploadLog.query.order_by(UploadLog.uploaded_at.desc()).limit(20).all()
     airline_logs = AirlineUploadLog.query.order_by(AirlineUploadLog.uploaded_at.desc()).limit(20).all()
     fuel_sale_logs = FuelSaleUploadLog.query.order_by(FuelSaleUploadLog.uploaded_at.desc()).limit(20).all()
-    hist_routes, hist_airports = get_historical_rows()
+    # No cargar historical_2001_2022.json acá: en 512MB de Render eso + los blobs
+    # de AdminFile tumba el worker (502). Si el mapa ya calentó el cache, usamos el conteo.
+    hist_n_routes = len(_HISTORICAL_CACHE[0]) if _HISTORICAL_CACHE else 0
+    hist_n_airports = len(_HISTORICAL_CACHE[1]) if _HISTORICAL_CACHE else 0
     manual_routes = ManualRoute.query.order_by(ManualRoute.uploaded_at.desc()).all()
     airports = Airport.query.order_by(Airport.name.asc()).all()
     aircraft = Aircraft.query.order_by(Aircraft.name.asc()).all()
     flota_nombres = {f.get('nombre') for f in avion_model.get_flota().values() if f.get('nombre')}
     stats = {
-        'routes': RouteMonthly.query.count() + len(hist_routes),
-        'airports_monthly': AirportMonthly.query.count() + len(hist_airports),
+        'routes': RouteMonthly.query.count() + hist_n_routes,
+        'airports_monthly': AirportMonthly.query.count() + hist_n_airports,
         'airports_known': Airport.query.count(),
         'manual_routes': len(manual_routes),
     }
-    admin_files = AdminFile.query.order_by(AdminFile.uploaded_at.desc()).all()
+    admin_files = (
+        AdminFile.query.options(defer(AdminFile.content))
+        .order_by(AdminFile.uploaded_at.desc())
+        .all()
+    )
     usuarios = User.query.order_by(User.email.asc()).all() if nivel_actual() >= 3 else []
     return render_template('admin.html', logs=logs, airline_logs=airline_logs, fuel_sale_logs=fuel_sale_logs,
                             stats=stats, manual_routes=manual_routes, airports=airports, aircraft=aircraft,
