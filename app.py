@@ -33,9 +33,10 @@ from parser_aerolineas import extract_report
 from geocode import COORDS, ARGENTINA_NAMES
 import avion_model
 
-# La proyección estadística es opcional a propósito: necesita pandas + lightgbm, que
-# pesan bastante más que el resto de requirements.txt. Si no están instalados el mapa
-# arranca igual, sólo que sin períodos futuros — no se rompe nada, se pierde una capa.
+# pandas + lightgbm están en requirements.txt, pero el import va guardado igual: son las
+# dependencias más pesadas de la app y las únicas que pueden fallar por memoria o por no
+# encontrar wheel. Si eso pasa, el mapa tiene que arrancar igual y quedarse sin períodos
+# futuros — perder una capa es mucho mejor que no levantar.
 try:
     import proyeccion_forecast
     PROYECCION_ERROR = None

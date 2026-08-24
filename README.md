@@ -90,10 +90,10 @@ proyeccion_forecast.py  filas listas para /api/data, con caché en memoria
 templates/modelo.html   la explicación que ve el usuario
 ```
 
-**Las dependencias no están en `requirements.txt` a propósito.** El import está
-guardado: sin `pandas` + `lightgbm` la app arranca igual y el mapa funciona
-completo, sólo que sin períodos futuros. Medido en local con la base de
-desarrollo:
+### Costo de tenerla prendida
+
+`numpy`, `pandas` y `lightgbm` están en `requirements.txt`, así que la capa
+viene activa. No es gratis — medido en local con la base de desarrollo:
 
 | | sin proyección | con proyección |
 |---|---|---|
@@ -101,10 +101,15 @@ desarrollo:
 | primer `/api/data` | ~1 s | ~13 s (entrena los dos modelos) |
 | llamadas siguientes | ~1 s | ~1 s (caché en memoria) |
 
-En una instancia de 512 MB eso deja poco margen, que es justo el problema que
-ya provocó 502 en `/admin`. Para activarla en Render hay que agregar
-`pandas` y `lightgbm` a `requirements.txt` y subir el plan de la instancia; si
-después aparecen 502, sacarlas alcanza para volver atrás sin tocar nada más.
+En una instancia de 512 MB eso deja poco margen, y es el mismo tipo de problema
+que ya provocó 502 en `/admin`. El `--timeout 300` de gunicorn cubre de sobra
+los 13 segundos del primer request; lo que hay que mirar es la memoria.
+
+**Si empiezan los 502, comentá las tres líneas de `requirements.txt` y volvé a
+deployar.** No hay que tocar nada más: el import de `proyeccion_forecast` en
+`app.py` está guardado, así que sin esas librerías el mapa arranca completo y
+simplemente no ofrece períodos futuros. `/modelo` lo dice en pantalla en vez de
+mostrar una página rota.
 
 El caché se invalida solo: la clave incluye el último período cargado y la
 cantidad de filas con dato, así que subir una planilla nueva desde `/admin`

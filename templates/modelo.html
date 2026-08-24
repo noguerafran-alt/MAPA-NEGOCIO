@@ -63,9 +63,10 @@ preciso es, y dónde no hay que confiarle.</p>
 {% if not disponible %}
 <div class="aviso">
   <p><strong>La proyección no está activa en esta instancia.</strong>
-  Faltan las dependencias (pandas, numpy, lightgbm, scikit-learn), que no están en
-  <code>requirements.txt</code> a propósito. El mapa funciona igual, sólo que sin
-  períodos futuros.</p>
+  No se pudieron cargar <code>pandas</code>, <code>numpy</code> o <code>lightgbm</code>.
+  Están en <code>requirements.txt</code>, así que si faltan es que el deploy no las
+  instaló o que la instancia se quedó sin memoria al importarlas. El mapa funciona
+  igual, sólo que sin períodos futuros.</p>
 </div>
 {% else %}
 

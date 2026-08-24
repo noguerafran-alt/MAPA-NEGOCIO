@@ -8,3 +8,17 @@ psycopg2-binary
 openpyxl
 pypdf
 gunicorn
+
+# Capa de proyeccion (proyeccion_*.py). Suma ~150 MB de RSS y ~13 s al primer
+# /api/data, que despues cachea. Si el servicio empieza a tirar 502 por memoria,
+# comentar estas tres lineas alcanza para volver atras: el import esta guardado
+# y el mapa funciona igual, solo que sin periodos futuros.
+#
+# Los pisos de version no son decorativos. Las ruedas de pandas 3.x y lightgbm
+# 4.x piden manylinux_2_28; en una imagen con glibc mas vieja pip resuelve sin
+# quejarse a pandas 2.3 y lightgbm 3.3, que es OTRO modelo del que se midio en
+# el backtest de /modelo. Con el piso puesto, ese caso rompe el build en vez de
+# deployar callado una version distinta.
+numpy>=2.0
+pandas>=3.0
+lightgbm>=4.5
