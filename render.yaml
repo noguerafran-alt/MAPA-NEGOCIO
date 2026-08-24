@@ -2,21 +2,28 @@ services:
   - type: web
     name: rutas-aereas-argentina
     runtime: python
-    plan: free
+    plan: starter
+    disk:
+      name: mapa-data
+      mountPath: /var/data
+      sizeGB: 1
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn app:app --workers 1 --threads 2 --timeout 300
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
+      # Dejá DATABASE_URL con la URL de Neon SOLO durante el primer deploy:
+      # la app copia Neon → /var/data/mapa.db y después usa el disco.
+      # Después de verificar que /admin y el mapa andan, podés borrar Neon.
       - key: DATABASE_URL
         sync: false
+      - key: NEON_DATABASE_URL
+        sync: false
       - key: GOOGLE_CLIENT_ID
-        sync: false  # se carga a mano en el dashboard de Render (viene de Google Cloud Console)
+        sync: false
       - key: GOOGLE_CLIENT_SECRET
-        sync: false  # idem, nunca se commitea
+        sync: false
       - key: SECRET_KEY
         generateValue: true
-      # ADMIN_PASSWORD, MAP_PASSWORD y FUEL_PASSWORD ya NO se usan: el acceso pasó a ser
-      # por cuenta de Google (modelo User, con nivel 1/2/3). Si venís de una versión
-      # anterior con esas variables, podés borrarlas del dashboard de Render una vez que
-      # hayas creado al menos un nivel 3 con `flask autorizar-usuario` (ver README).
+      - key: RENDER_DISK_PATH
+        value: /var/data
