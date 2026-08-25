@@ -12,7 +12,7 @@ import click
 from datetime import datetime
 from functools import wraps
 
-from flask import Flask, jsonify, request, render_template, send_file, session, redirect, url_for, Response
+from flask import Flask, jsonify, request, render_template, send_file, session, redirect, url_for, Response, make_response
 from flask_compress import Compress
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -2895,7 +2895,15 @@ def modelo_page():
             # justamente donde el usuario va a buscar por qué el mapa no muestra futuro.
             print(f"/modelo sin estado de proyección: {type(e).__name__}: {e}", flush=True)
 
-    return render_template('modelo.html', **ctx)
+    # Mismo no-store que el mapa, y por el mismo motivo: esta página existe para
+    # reportar el estado de AHORA (hasta dónde llegan los datos, si la proyección
+    # cargó). Una copia cacheada acusa de un problema que ya no existe — pasó: tras
+    # activar las dependencias seguía mostrando el aviso de "no está activa" del
+    # deploy anterior, y parecía que el deploy no había salido.
+    resp = make_response(render_template('modelo.html', **ctx))
+    resp.headers['Cache-Control'] = 'no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    return resp
 
 
 @app.route('/proyecciones')
