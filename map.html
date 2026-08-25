@@ -49,8 +49,13 @@
     border-bottom: 1px solid #2a3358;
   }
 
+  /* El ancho lo termina de fijar layoutBottomBar(): esta barra y los accesos de abajo a
+     la derecha comparten la misma franja, y con el texto largo (periodo + rutas + vuelos
+     + pasajeros + m3) la barra crecia por encima de "Noticias" y lo tapaba. El tope de
+     aca es solo para que no se pase de la pantalla antes de que corra el JS. */
   #stats {
     position: fixed; bottom: 14px; left: 14px; z-index: 10;
+    max-width: calc(100vw - 28px); line-height: 1.45;
     background: rgba(16,22,46,0.88); backdrop-filter: blur(6px);
     border: 1px solid #2a3358; border-radius: 10px;
     padding: 8px 14px; color: #9aa4c7; font-size: 12px;
@@ -1936,6 +1941,10 @@ function render(skipListRebuild) {
     document.getElementById('stats').textContent = aggregateStats;
   }
 
+  // El texto cambia de largo con el periodo y con el filtro de aeropuertos: recalcular
+  // aca el hueco disponible evita que una etiqueta mas larga vuelva a tapar los accesos.
+  if (typeof layoutBottomBar === 'function') layoutBottomBar();
+
   chequearFuelSalesSinMatch(years, months);
 }
 
@@ -1979,6 +1988,7 @@ function chequearFuelSalesSinMatch(years, months) {
         `Se subieron bien, pero no van a aparecer en el mapa hasta agregarles un alias. ` +
         `Click para abrir /admin →`;
       warn.style.display = 'block';
+      if (typeof layoutBottomBar === 'function') layoutBottomBar();
     } catch (e) { /* si falla el chequeo, no romper el mapa por esto */ }
   }, 400);
 }
@@ -2047,7 +2057,7 @@ function selectAllMonths() {
   // Encadenar de derecha a izquierda: Crédito -> Cómo se proyecta -> Proyecciones ->
   // Aerolíneas -> Noticias -> Admin -> Salir, cada uno usando el ancho real del anterior
   // (varía según fuente/zoom) en vez de valores fijos a ojo.
-  function positionAdminLink() {
+  function layoutBottomBar() {
     const credit = document.getElementById('credit');
     const modeloLink = document.getElementById('modelo-link');
     const proyeccionesLink = document.getElementById('proyecciones-link');
@@ -2087,9 +2097,36 @@ function selectAllMonths() {
     const logoutRight = adminRight + adminWidth + 8;
     logoutLink.style.right = logoutRight + 'px';
     logoutLink.style.visibility = 'visible';
+
+    // La barra de totales arranca en left:14 y crece hacia la derecha con el largo del
+    // texto. Sin tope terminaba montada sobre los accesos (y les gana: tiene z-index).
+    // Se corta donde empieza el acceso mas a la izquierda y el texto envuelve solo.
+    const stats = document.getElementById('stats');
+    if (stats) {
+      const libre = logoutLink.getBoundingClientRect().left - 14 - 10;
+      if (libre < 260) {
+        // Ventana angosta: al lado de los accesos no entra nada legible, asi que la
+        // barra se apoya arriba de ellos en vez de pisarlos.
+        stats.style.bottom = (12 + logoutLink.getBoundingClientRect().height + 8) + 'px';
+        stats.style.maxWidth = 'calc(100vw - 28px)';
+      } else {
+        stats.style.bottom = '14px';
+        stats.style.maxWidth = libre + 'px';
+      }
+
+      // El aviso de combustible se apoya sobre la barra de totales, que ahora puede
+      // tener mas de una linea o estar mas arriba: la posicion se mide, no se asume.
+      const warn = document.getElementById('fuel-diag-warning');
+      if (warn) {
+        const top = stats.getBoundingClientRect().top;
+        warn.style.bottom = (window.innerHeight - top + 8) + 'px';
+      }
+    }
   }
-  window.addEventListener('load', positionAdminLink);
-  window.addEventListener('resize', positionAdminLink);
+  // Nombre viejo: quedan llamadas desde render() y desde el chequeo de combustible.
+  const positionAdminLink = layoutBottomBar;
+  window.addEventListener('load', layoutBottomBar);
+  window.addEventListener('resize', layoutBottomBar);
 </script>
 
 </body>
