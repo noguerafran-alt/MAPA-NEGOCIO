@@ -44,6 +44,12 @@ except Exception as _e:                                  # pragma: no cover
     proyeccion_forecast = None
     PROYECCION_ERROR = '%s: %s' % (type(_e).__name__, _e)
 
+# El deploy NO entrena el modelo: lo lee ya calculado de proyeccion_precomputada.json.
+# Entrenar cuesta 141 MB solo de imports y pica en 280 MB, y la instancia tiene 512 MB
+# contando todo lo demas; el detalle esta en el docstring de proyeccion_archivo.py.
+# Este import es stdlib pura: no puede fallar por memoria ni por falta de wheel.
+import proyeccion_archivo
+
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-change-me')
 if app.secret_key == 'dev-secret-change-me' and os.environ.get('RENDER'):
@@ -933,6 +939,47 @@ def logout():
     return redirect(url_for('login_page'))
 
 
+def _fecha_bonita(iso):
+    """'2026-08-25T22:40:00' -> '25/08/2026 22:40'. Si no parsea, la deja como vino."""
+    try:
+        return datetime.strptime(iso, '%Y-%m-%dT%H:%M:%S').strftime('%d/%m/%Y %H:%M')
+    except (TypeError, ValueError):
+        return iso
+
+
+def _ultimo_t_real(*grupos):
+    """Indice t del ultimo mes con dato real (vuelos o pax) entre las filas dadas.
+
+    La proyeccion precomputada se recorta contra esto: un mes proyectado que ya
+    tiene planilla de ANAC cargada no se dibuja, porque si no el mapa sumaria las
+    dos filas y ese mes contaria doble.
+
+    Ojo con que filas se le pasan: las rutas manuales traen vuelos=1 en TODOS los
+    meses de todos los anios, asi que incluirlas haria creer que ya hay dato real
+    hasta diciembre y se comeria la proyeccion entera.
+    """
+    ultimo = None
+    for filas in grupos:
+        for r in filas:
+            if r.get('vuelos') is None and r.get('pax') is None:
+                continue
+            t = proyeccion_archivo.t_de(r.get('year'), r.get('month'))
+            if t is not None and (ultimo is None or t > ultimo):
+                ultimo = t
+    return ultimo
+
+
+def _ultimo_t_real_db():
+    """Lo mismo, pero sin armar /api/data entero: para /modelo y el diagnostico."""
+    ts = [proyeccion_archivo.t_de(anio, mes) for anio, mes
+          in db.session.query(RouteMonthly.year, RouteMonthly.month).distinct()]
+    ts = [t for t in ts if t is not None]
+    if ts:
+        return max(ts)
+    hist_routes, _ = get_historical_rows()
+    return _ultimo_t_real(hist_routes)
+
+
 @app.route('/api/data')
 @limiter.limit("30 per minute")
 def api_data():
@@ -995,7 +1042,15 @@ def api_data():
         # multiplica por consumo_total_kg), así que no hace falta proyectar litros: con
         # proyectar tráfico, toda la cadena de consumo se calcula sola río abajo.
         proyectadas, periodos_proy = [], []
-        if proyeccion_forecast is not None:
+        ultimo_real_t = _ultimo_t_real(hist_routes, db_routes)
+        if proyeccion_archivo.disponible():
+            # Camino normal del deploy: la proyeccion ya viene calculada, esto es leer
+            # un JSON y descartar los meses que mientras tanto pasaron a ser reales.
+            proyectadas = proyeccion_archivo.rutas_proyectadas(ultimo_real_t)
+            periodos_proy = proyeccion_archivo.periodos_proyectados(proyectadas)
+        elif proyeccion_forecast is not None:
+            # Sin archivo, y con el modelo instalado (una maquina con RAM): se entrena
+            # en el momento. En Render esto no corre porque no estan las dependencias.
             try:
                 proyectadas = proyeccion_forecast.rutas_proyectadas()
                 periodos_proy = proyeccion_forecast.periodos_proyectados(proyectadas)
@@ -2832,12 +2887,26 @@ def api_deploy_status():
 
     todo_ok = (all(archivos.values()) and tipos_flota > 0 and rutas_consumo > 0)
 
+    # Estado de la proyeccion. Va aca porque este endpoint existe justamente para
+    # contestar "que llego al servidor" sin entrar a leer logs de Render, y la
+    # proyeccion es lo que mas seguido queda afuera de un deploy.
+    try:
+        proy = proyeccion_archivo.estado(_ultimo_t_real_db())
+    except Exception as e:                                        # pragma: no cover
+        proy = {'hay_archivo': False, 'error': '%s: %s' % (type(e).__name__, e)}
+    proy['modelo_en_vivo_disponible'] = proyeccion_forecast is not None
+    proy['error_import_modelo'] = PROYECCION_ERROR
+    proy['fuente'] = ('archivo precomputado' if proy.get('n_filas') else
+                      'modelo en vivo' if proyeccion_forecast is not None else
+                      'sin proyeccion')
+
     return jsonify({
         "todo_ok": todo_ok,
         "version_esperada": MODEL_VERSION,
         "archivos_encontrados": archivos,
         "tipos_de_avion_cargados": tipos_flota,
         "rutas_con_consumo_real_cargadas": rutas_consumo,
+        "proyeccion": proy,
         "diagnostico": (
             "Todo en orden." if todo_ok else
             "Falta o está vacío alguno de los archivos del modelo — revisá 'archivos_encontrados' "
@@ -2858,11 +2927,36 @@ def modelo_page():
     if nivel_actual() < 1:
         return redirect(url_for('login_page'))
 
-    ctx = {'disponible': False, 'ultimo_real': '—', 'desde': '—', 'hasta': '—',
+    ctx = {'disponible': False, 'fuente': None, 'error': PROYECCION_ERROR,
+           'generado': None, 'base_periodo': None, 'desactualizada': False,
+           'ultimo_real': '—', 'desde': '—', 'hasta': '—',
            'n_rutas': 0, 'n_rutas_total': 0, 'n_filas': 0}
 
-    if proyeccion_forecast is not None:
+    # Lo que sirve el deploy es el archivo precomputado. El modelo en vivo queda
+    # como respaldo para una maquina con RAM, no para la instancia de 512 MB.
+    try:
+        est = proyeccion_archivo.estado(_ultimo_t_real_db())
+    except Exception as e:
+        print(f"/modelo sin estado del archivo: {type(e).__name__}: {e}", flush=True)
+        est = {'hay_archivo': False}
+
+    if est.get('hay_archivo'):
+        ctx.update(
+            disponible=bool(est['n_filas']),
+            fuente='archivo',
+            generado=_fecha_bonita(est['generado']),
+            base_periodo=est['base_periodo'],
+            desactualizada=est['desactualizada'],
+            ultimo_real=est['ultimo_real'] or est['base_periodo'] or '—',
+            desde=est['desde'] or '—',
+            hasta=est['hasta'] or '—',
+            n_rutas=est['n_rutas'],
+            n_rutas_total=est['n_rutas_panel'] or 0,
+            n_filas='{:,}'.format(est['n_filas_panel'] or 0).replace(',', '.'),
+        )
+    elif proyeccion_forecast is not None:
         try:
+            ctx['fuente'] = 'vivo'
             panel = proyeccion_forecast.cargar_panel()
             filas = proyeccion_forecast.rutas_proyectadas(panel)
             periodos = proyeccion_forecast.periodos_proyectados(filas)

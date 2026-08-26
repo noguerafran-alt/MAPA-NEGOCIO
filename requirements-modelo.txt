@@ -1,0 +1,17 @@
+# Dependencias para REGENERAR la proyeccion, no para correr la app.
+#
+#     pip install -r requirements-modelo.txt
+#     python precomputar_proyeccion.py
+#
+# El deploy no las instala (ver requirements.txt): entrenar pica en 280 MB y la
+# instancia de Render tiene 512 MB contando todo lo demas. El servidor solo lee
+# el JSON que sale de aca.
+#
+# Los pisos de version no son decorativos. Las ruedas de pandas 3.x y lightgbm
+# 4.x piden manylinux_2_28; en una imagen con glibc mas vieja pip resuelve sin
+# quejarse a pandas 2.3 y lightgbm 3.3, que es OTRO modelo del que se midio en
+# el backtest de /modelo. Con el piso puesto, ese caso rompe la instalacion en
+# vez de generar callado una proyeccion con una version distinta.
+numpy>=2.0
+pandas>=3.0
+lightgbm>=4.5

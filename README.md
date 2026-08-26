@@ -69,9 +69,10 @@ que se pierda el acceso, y después podés borrarlas del dashboard de Render.
 
 ## Proyección de tráfico (opcional)
 
-El mapa puede mostrar **12 meses hacia adelante**: `proyeccion_forecast.py`
-estima vuelos y pasajeros por ruta y los inyecta en `/api/data` como períodos
-más. No proyecta combustible — el mapa ya sabe pasar de vuelos+pasajeros a m³
+El mapa puede mostrar **12 meses hacia adelante**: se estiman vuelos y pasajeros
+por ruta y se inyectan en `/api/data` como períodos más. El modelo **no corre en
+el servidor** — la instancia tiene 512 MB y no entra; corre en tu máquina y deja
+el resultado en `proyeccion_precomputada.json`, que es lo que sirve el deploy. No proyecta combustible — el mapa ya sabe pasar de vuelos+pasajeros a m³
 (elige avión por ocupación y multiplica por el consumo por vuelo), así que toda
 la cadena de consumo se calcula sola río abajo.
 
@@ -83,37 +84,59 @@ pasajeros y 0.98 contra 1.04 en vuelos: sirve para dimensionar, no para
 comprometer volumen contractual.
 
 ```
-proyeccion_datos.py     empalma historical_2001_2022.json con route_monthly
-                        (el JSON trae los pasajeros en MILES, la base en unidades)
-proyeccion_modelo.py    features, modelo y backtest contra baselines
-proyeccion_forecast.py  filas listas para /api/data, con caché en memoria
-templates/modelo.html   la explicación que ve el usuario
+proyeccion_datos.py       empalma historical_2001_2022.json con route_monthly
+                          (el JSON trae los pasajeros en MILES, la base en unidades)
+proyeccion_modelo.py      features, modelo y backtest contra baselines
+proyeccion_forecast.py    entrena y arma las filas — necesita pandas + lightgbm
+precomputar_proyeccion.py corre el modelo y guarda el resultado (en tu máquina)
+proyeccion_archivo.py     lee ese archivo en el server — stdlib pura, sin pandas
+templates/modelo.html     la explicación que ve el usuario
 ```
 
-### Costo de tenerla prendida
+### Por qué el servidor no entrena
 
-`numpy`, `pandas` y `lightgbm` están en `requirements.txt`, así que la capa
-viene activa. No es gratis — medido en local con la base de desarrollo:
+Entrenar no entra en la instancia. Medido con un solo hilo, que es lo que se
+parece a los 0.5 CPU de Render:
 
-| | sin proyección | con proyección |
+| | ahora (lee el archivo) | entrenando en el proceso web |
 |---|---|---|
-| RSS después de `/api/data` | ~135 MB | ~284 MB (pico 377 MB) |
-| primer `/api/data` | ~1 s | ~13 s (entrena los dos modelos) |
-| llamadas siguientes | ~1 s | ~1 s (caché en memoria) |
+| RSS sirviendo `/api/data` | 153 MB de pico | ~284 MB, pico 377 MB |
+| primer `/api/data` | ~1 s | ~12 s a un hilo → 25-30 s a 0.5 CPU |
+| después de cada reinicio | ~1 s | vuelve a pagar esos 25-30 s |
 
-En una instancia de 512 MB eso deja poco margen, y es el mismo tipo de problema
-que ya provocó 502 en `/admin`. El `--timeout 300` de gunicorn cubre de sobra
-los 13 segundos del primer request; lo que hay que mirar es la memoria.
+El costo fijo es lo que más duele: importar numpy y pandas son 50 MB de RSS y
+lightgbm otros 70 MB, **antes** de tocar un solo dato. Con 512 MB en total —y
+ahí adentro también entran Flask, el histórico 2001-2022, el ORM y el JSON que
+arma el mapa— eso deja al servicio a un upload de `/admin` de distancia del OOM
+killer. Y el caché del modelo vive en memoria, así que se pierde en cada
+reinicio y la primera visita siguiente vuelve a esperar medio minuto.
 
-**Si empiezan los 502, comentá las tres líneas de `requirements.txt` y volvé a
-deployar.** No hay que tocar nada más: el import de `proyeccion_forecast` en
-`app.py` está guardado, así que sin esas librerías el mapa arranca completo y
-simplemente no ofrece períodos futuros. `/modelo` lo dice en pantalla en vez de
-mostrar una página rota.
+Por eso `requirements.txt` **no** instala numpy/pandas/lightgbm, y el deploy
+sirve `proyeccion_precomputada.json` (~300 KB) leyéndolo con la stdlib.
 
-El caché se invalida solo: la clave incluye el último período cargado y la
-cantidad de filas con dato, así que subir una planilla nueva desde `/admin`
-fuerza el reentrenamiento sin que haya que acordarse de limpiarlo.
+### Regenerar la proyección (una vez por planilla nueva)
+
+```
+pip install -r requirements-modelo.txt      # sólo la primera vez
+python precomputar_proyeccion.py
+git add proyeccion_precomputada.json
+git commit -m "Proyección al <mes>" && git push
+```
+
+Si los datos frescos están en la instancia local, apuntá ahí la base:
+
+```
+python precomputar_proyeccion.py --db ../MAPA-NEGOCIO-LOCAL/instance/local_dev.db
+```
+
+Mientras no se regenere no se rompe nada, pero tampoco se disimula:
+
+- Un mes proyectado que **ya tiene dato real** no se dibuja. Si no, el mapa
+  sumaría la proyección encima de la planilla de ANAC y ese mes contaría doble.
+- `/modelo` avisa "se calculó con datos hasta X y la base ya llega hasta Y", con
+  la fecha exacta en que se generó el archivo.
+- `/api/deploy_status` trae un bloque `proyeccion` con lo mismo en JSON — y si
+  la proyección no está, el error exacto en vez de una suposición.
 
 Para medir de nuevo el backtest (tarda varios minutos, no entra en un request):
 

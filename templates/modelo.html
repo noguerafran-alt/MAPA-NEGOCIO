@@ -60,15 +60,17 @@
 <p class="sub">Qué hace el modelo que llena los períodos futuros del mapa, qué tan
 preciso es, y dónde no hay que confiarle.</p>
 
-{% if not disponible %}
+{% if disponible %}
+
+{% if desactualizada %}
 <div class="aviso">
-  <p><strong>La proyección no está activa en esta instancia.</strong>
-  No se pudieron cargar <code>pandas</code>, <code>numpy</code> o <code>lightgbm</code>.
-  Están en <code>requirements.txt</code>, así que si faltan es que el deploy no las
-  instaló o que la instancia se quedó sin memoria al importarlas. El mapa funciona
-  igual, sólo que sin períodos futuros.</p>
+  <p><strong>La proyección está atrasada.</strong> Se calculó con datos hasta
+  <strong>{{ base_periodo }}</strong> y la base ya llega hasta <strong>{{ ultimo_real }}</strong>.
+  Los meses que pasaron a ser reales se dibujan con el dato de ANAC, no con la
+  proyección — pero el resto del futuro no vio esos meses. Para regenerarla:
+  <code>python precomputar_proyeccion.py</code> y commitear el archivo.</p>
 </div>
-{% else %}
+{% endif %}
 
 <div class="card">
   <div class="chips">
@@ -77,7 +79,37 @@ preciso es, y dónde no hay que confiarle.</p>
     <div class="chip"><span class="k">Rutas proyectadas</span><span class="v">{{ n_rutas }}</span></div>
     <div class="chip"><span class="k">Rutas en el panel</span><span class="v">{{ n_rutas_total }}</span></div>
     <div class="chip"><span class="k">Filas ruta-mes</span><span class="v">{{ n_filas }}</span></div>
+    {% if fuente == 'archivo' %}
+    <div class="chip"><span class="k">Calculada el</span><span class="v">{{ generado }}</span></div>
+    {% else %}
+    <div class="chip"><span class="k">Calculada</span><span class="v">en vivo, en este servidor</span></div>
+    {% endif %}
   </div>
+</div>
+
+{% elif fuente == 'archivo' %}
+<div class="aviso">
+  <p><strong>La proyección guardada ya quedó vieja.</strong> Se calculó con datos hasta
+  {{ base_periodo }}, y todos los meses que proyectaba ya tienen dato real cargado, así
+  que no queda nada futuro para dibujar. Regenerala con
+  <code>python precomputar_proyeccion.py</code> y commiteá el archivo.</p>
+</div>
+
+{% elif error %}
+<div class="aviso">
+  <p><strong>La proyección no está activa en esta instancia.</strong>
+  No llegó <code>proyeccion_precomputada.json</code> al deploy y el modelo en vivo
+  tampoco cargó: <code>{{ error }}</code>. El mapa funciona igual, sólo que sin
+  períodos futuros.</p>
+</div>
+
+{% else %}
+<div class="aviso">
+  <p><strong>La proyección no está activa en esta instancia.</strong>
+  Falta <code>proyeccion_precomputada.json</code>. El servidor no entrena el modelo
+  — con 512 MB de RAM no entra — sino que sirve el archivo que se genera con
+  <code>python precomputar_proyeccion.py</code> y se commitea al repo. El mapa
+  funciona igual, sólo que sin períodos futuros.</p>
 </div>
 {% endif %}
 
@@ -95,6 +127,14 @@ preciso es, y dónde no hay que confiarle.</p>
   <p>Sólo entran las rutas <strong>activas en los últimos 12 meses</strong>. Sin ese filtro
   el modelo revive rutas muertas — las de El Palomar, por ejemplo — y el mapa dibujaría
   tráfico que no va a existir.</p>
+
+  <p><strong>El servidor no entrena: lee.</strong> Entrenar necesita numpy, pandas y
+  lightgbm, que son 141 MB de RAM sólo por importarlos y un pico de 280 MB mientras
+  corre. Esta instancia tiene 512 MB en total, y ahí adentro también entran Flask, el
+  histórico 2001-2022 y el JSON que arma el mapa. Así que el modelo se corre en una
+  máquina con RAM y el resultado viaja al repo como un archivo de ~250 KB que el
+  servidor sirve tal cual: la proyección que ves no se recalculó al abrir la página,
+  se calculó el día que dice el recuadro de arriba.</p>
 </div>
 
 <h2>Cómo funciona</h2>
