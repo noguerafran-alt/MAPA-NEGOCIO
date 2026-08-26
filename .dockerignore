@@ -1,0 +1,11 @@
+.git
+.gitignore
+__pycache__/
+*.pyc
+instance/
+*.db
+.env
+README.md
+render.yaml
+*.js
+templates/*.html.bak
