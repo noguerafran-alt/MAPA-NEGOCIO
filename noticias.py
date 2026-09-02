@@ -372,10 +372,20 @@ def load_noticias_feed(segment="todas", periodo="7d"):
     elif periodo not in valid:
         periodo = "7d"
 
+    latest = dias[-1] if dias else today
+    has_calendar_7d = any(d >= today - timedelta(days=7) for d in dias)
+    # Si "últimos 7 días" está vacío (la auto corre los miércoles y el recorte
+    # queda viejo), mostramos los 7 días que cierran en la nota más reciente.
+    fallback_7d = periodo == "7d" and not has_calendar_7d
+
     filtradas = []
     for n in noticias:
         day = _parse_day(n.get("publishedAt"))
-        if _in_periodo(day, periodo, today):
+        if fallback_7d:
+            ok = bool(day and day >= latest - timedelta(days=7))
+        else:
+            ok = _in_periodo(day, periodo, today)
+        if ok:
             n["fecha_label"] = _fecha_label(n.get("publishedAt"), today)
             filtradas.append(n)
     filtradas.sort(key=lambda n: n.get("publishedAt") or "", reverse=True)
@@ -400,6 +410,8 @@ def load_noticias_feed(segment="todas", periodo="7d"):
     if periodo.startswith("w:"):
         start = date.fromisoformat(periodo[2:])
         periodo_label = f"Semana {_fmt_span(start, start + timedelta(days=6))}"
+    elif fallback_7d:
+        periodo_label = f"Último recorte ({_fmt_span(latest - timedelta(days=7), latest)})"
     else:
         periodo_label = next((label for key, label in periodos if key == periodo), "Últimos 7 días")
     generated = (briefing.get("generatedAt") or "")[:10]
