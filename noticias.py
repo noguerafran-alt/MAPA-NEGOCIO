@@ -251,7 +251,7 @@ DEFAULT_FEED_URL = (
     "https://raw.githubusercontent.com/noguerafran-alt/noticias-aviacion-feed/main/noticias-feed.json"
 )
 _CACHE = {"at": 0.0, "payload": None}
-_CACHE_TTL = 600
+_CACHE_TTL = 60
 
 
 def _fetch_remote():
@@ -261,14 +261,28 @@ def _fetch_remote():
     now = time.time()
     if _CACHE["payload"] is not None and (now - _CACHE["at"]) < _CACHE_TTL:
         return _CACHE["payload"]
+    fetch_url = url
+    if "githubusercontent.com" in url or "jsdelivr.net" in url:
+        sep = "&" if "?" in url else "?"
+        fetch_url = f"{url}{sep}t={int(now)}"
     req = urllib.request.Request(
-        url,
-        headers={"Accept": "application/json", "User-Agent": "mapa-negocio"},
+        fetch_url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "mapa-negocio",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+        },
     )
-    with urllib.request.urlopen(req, timeout=4) as resp:
-        payload = json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError, json.JSONDecodeError):
+        if _CACHE["payload"] is not None:
+            return _CACHE["payload"]
+        raise
     if not isinstance(payload, dict):
-        return None
+        return _CACHE["payload"]
     _CACHE["payload"] = payload
     _CACHE["at"] = now
     return payload
