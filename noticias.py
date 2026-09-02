@@ -260,7 +260,11 @@ def _fetch_remote():
         return None
     now = time.time()
     if _CACHE["payload"] is not None and (now - _CACHE["at"]) < _CACHE_TTL:
-        return _CACHE["payload"]
+        cached_at = datetime.fromtimestamp(_CACHE["at"], ZoneInfo("America/Buenos_Aires"))
+        now_ar = datetime.now(ZoneInfo("America/Buenos_Aires"))
+        six = now_ar.replace(hour=6, minute=0, second=0, microsecond=0)
+        if not (now_ar >= six and cached_at < six):
+            return _CACHE["payload"]
     fetch_url = url
     if "githubusercontent.com" in url or "jsdelivr.net" in url:
         sep = "&" if "?" in url else "?"
