@@ -194,12 +194,32 @@ def _normalize_item(raw, idx):
     published = raw.get("publishedAt") or ""
     if published and "T" in published:
         published = published[:10]
+    source_url = raw.get("sourceUrl") or raw.get("source_url") or ""
+    channel = (raw.get("channel") or raw.get("origen") or "").lower()
+    if channel in ("x", "twitter", "tweet"):
+        channel = "x"
+    elif "x.com/" in source_url.lower() or "twitter.com/" in source_url.lower():
+        channel = "x"
+    else:
+        channel = "web"
+    source = (raw.get("source") or "").strip()
+    handle = (raw.get("sourceHandle") or raw.get("handle") or "").strip().lstrip("@")
+    if not handle and channel == "x" and source_url:
+        import re
+        m = re.search(r"(?:x\.com|twitter\.com)/([^/?#]+)/status", source_url, re.I)
+        if m and m.group(1).lower() not in ("i", "intent", "share"):
+            handle = m.group(1)
+    if channel == "x":
+        source_label = f"@{handle}" if handle else (source if source.startswith("@") else (f"@{source}" if source else "X"))
+    else:
+        source_label = source or "—"
     return {
         "id": raw.get("id") or idx,
         "title": raw.get("title") or "",
         "summary": raw.get("summary") or "",
-        "source": raw.get("source") or "",
-        "sourceUrl": raw.get("sourceUrl") or raw.get("source_url") or "",
+        "source": source,
+        "source_label": source_label,
+        "sourceUrl": source_url,
         "publishedAt": published,
         "airline": raw.get("airline") or "—",
         "segment": segment,
@@ -207,6 +227,7 @@ def _normalize_item(raw, idx):
         "fuelTag": fuel,
         "fuel_label": FUEL_LABEL[fuel],
         "relevance": raw.get("relevance") or "media",
+        "channel": channel,
     }
 
 
@@ -410,6 +431,8 @@ def load_noticias_feed(segment="todas", periodo="7d"):
     noticias = filtradas
     counts = {
         "total": len(noticias),
+        "portales": sum(1 for n in noticias if n["channel"] != "x"),
+        "x": sum(1 for n in noticias if n["channel"] == "x"),
         "combustible": sum(1 for n in noticias if n["segment"] == "combustible"),
         "jet": sum(1 for n in noticias if n["fuelTag"] == "jet"),
         "avgas": sum(1 for n in noticias if n["fuelTag"] == "avgas"),
@@ -419,11 +442,17 @@ def load_noticias_feed(segment="todas", periodo="7d"):
     if segment and segment != "todas":
         noticias = [n for n in noticias if n["segment"] == segment]
 
+    canales = []
     grupos = []
-    for key in SEGMENT_ORDER:
-        items = [n for n in noticias if n["segment"] == key]
-        if items:
-            grupos.append({"id": key, "label": SEGMENT_LABEL[key], "notas": items})
+    for ch_id, ch_label in (("web", "Portales"), ("x", "X")):
+        grupos_ch = []
+        for key in SEGMENT_ORDER:
+            items = [n for n in noticias if n["channel"] == ch_id and n["segment"] == key]
+            if items:
+                g = {"id": key, "label": SEGMENT_LABEL[key], "notas": items}
+                grupos_ch.append(g)
+                grupos.append(g)
+        canales.append({"id": ch_id, "label": ch_label, "grupos": grupos_ch})
 
     if periodo.startswith("w:"):
         start = date.fromisoformat(periodo[2:])
@@ -441,6 +470,7 @@ def load_noticias_feed(segment="todas", periodo="7d"):
     return {
         "briefing": briefing,
         "grupos": grupos,
+        "canales": canales,
         "counts": counts,
         "segment_sel": segment or "todas",
         "segmentos": [("todas", "Todas")] + [(k, SEGMENT_LABEL[k]) for k in SEGMENT_ORDER],
