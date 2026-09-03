@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YPF Aviación — Mapa de negocio</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: Arial, sans-serif; background: #0b1020; color: #eee;
+         margin: 0; padding: 40px 24px; min-height: 100vh; }
+  .wrap { max-width: 1000px; margin: 0 auto; }
+
+  /* encabezado */
+  .top { display: flex; align-items: center; gap: 18px; margin-bottom: 8px; }
+  .logo { height: 62px; background: #fff; border-radius: 6px; padding: 5px; flex: none; }
+  h1 { font-size: 23px; margin: 0 0 3px; }
+  .sub { color: #9aa4c7; font-size: 13px; margin: 0; line-height: 1.5; }
+  .quien { color: #7c86ab; font-size: 12px; margin: 22px 0 0; }
+  .quien b { color: #9aa4c7; font-weight: normal; }
+
+  hr { border: 0; border-top: 1px solid #2a3358; margin: 26px 0 24px; }
+
+  /* los accesos */
+  .grid { display: grid; gap: 14px;
+          grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+  .tile { position: relative; display: flex; flex-direction: column;
+          aspect-ratio: 1 / 1; padding: 18px;
+          background: #10162e; border: 1px solid #2a3358; border-radius: 12px;
+          text-decoration: none; color: inherit;
+          transition: border-color .15s, background .15s, transform .15s; }
+  .tile:hover { border-color: #4a5ea0; background: #141c3a; transform: translateY(-2px); }
+  .tile .ico { font-size: 26px; line-height: 1; margin-bottom: auto; }
+  .tile .nom { font-size: 15px; font-weight: bold; color: #fff; margin-bottom: 5px; }
+  .tile .des { font-size: 12px; color: #9aa4c7; line-height: 1.45; }
+
+  /* el mapa es la puerta principal, se distingue del resto */
+  .tile.principal { background: rgba(60,80,140,0.28); border-color: #4a5ea0;
+                    grid-column: span 2; aspect-ratio: 2 / 1; }
+  .tile.principal:hover { background: rgba(70,92,158,0.36); border-color: #7c93d8; }
+  .tile.principal .nom { font-size: 17px; }
+  .tile.principal .des { color: #cfd8f5; }
+
+  /* admin y salir: accesorios, no parte del recorrido normal */
+  .tile.tenue { background: #0d1226; }
+  .tile.tenue .nom { color: #d6dbef; }
+
+  .etiqueta { position: absolute; top: 14px; right: 14px; font-size: 9.5px;
+              text-transform: uppercase; letter-spacing: .5px; color: #7c86ab;
+              border: 1px solid #2a3358; border-radius: 5px; padding: 2px 6px; }
+
+  .pie { color: #7c86ab; font-size: 11.5px; margin-top: 30px; }
+
+  @media (max-width: 460px) {
+    body { padding: 26px 16px; }
+    .tile, .tile.principal { aspect-ratio: auto; min-height: 118px; }
+    .tile.principal { grid-column: span 1; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <img class="logo" src="{{ url_for('static', filename='ypf-aviacion.png') }}" alt="YPF Aviación">
+    <div>
+      <h1>Mapa de negocio — Aviación</h1>
+      <p class="sub">Rutas, tráfico y consumo de Jet A-1 en Argentina.<br>
+         Fuente: ANAC, series históricas 2001-{{ ultimo_anio }}.</p>
+    </div>
+  </div>
+
+  <p class="quien">Entraste como <b>{{ nombre }}</b> — nivel {{ nivel }}
+     {%- if nivel >= 3 %} (gestión de usuarios){% elif nivel >= 2 %} (carga de datos){% else %} (consulta){% endif %}.</p>
+
+  <hr>
+
+  <div class="grid">
+
+    <a class="tile principal" href="/mapa">
+      <div class="ico">🗺️</div>
+      <div class="nom">Mapa de rutas</div>
+      <div class="des">Vuelos, pasajeros, ocupación y metros cúbicos por ruta, mes a mes.
+         Cabotaje e internacional.</div>
+    </a>
+
+    <a class="tile" href="/proyecciones">
+      <div class="ico">📈</div>
+      <div class="nom">Proyecciones</div>
+      <div class="des">Escenarios de rutas cargados a mano y su impacto en el consumo
+         nacional.</div>
+    </a>
+
+    <a class="tile" href="/aerolineas">
+      <div class="ico">📊</div>
+      <div class="nom">Aerolíneas</div>
+      <div class="des">Vuelos, pasajeros y ocupación agrupados por aerolínea.</div>
+    </a>
+
+    <a class="tile" href="/noticias">
+      <div class="ico">📰</div>
+      <div class="nom">Noticias</div>
+      <div class="des">Briefing del sector, con el histórico por semana.</div>
+    </a>
+
+    <a class="tile" href="/modelo">
+      <div class="ico">◇</div>
+      <div class="nom">Cómo se proyecta</div>
+      <div class="des">El modelo que llena los períodos futuros del mapa y su error
+         medido.</div>
+    </a>
+
+    {% if nivel >= 2 %}
+    <a class="tile tenue" href="/admin">
+      <div class="ico">⚙</div>
+      <div class="nom">Administración</div>
+      <div class="des">Cargar planillas de ANAC y de combustible, aeropuertos, flota y
+         usuarios.</div>
+      <span class="etiqueta">Nivel 2</span>
+    </a>
+    {% endif %}
+
+    <a class="tile tenue" href="/logout">
+      <div class="ico">⏻</div>
+      <div class="nom">Salir</div>
+      <div class="des">Cerrar la sesión en este navegador.</div>
+    </a>
+
+  </div>
+
+  <p class="pie">Desarrollado por Francisco Luis Noguera para YPF Aviación</p>
+
+</div>
+</body>
+</html>

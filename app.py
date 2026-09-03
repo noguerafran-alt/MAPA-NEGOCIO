@@ -876,6 +876,33 @@ MODEL_VERSION = 'asignación por ocupación'
 
 @app.route('/')
 def index():
+    """Landing: la portada con los accesos. El mapa ya no vive acá sino en /mapa.
+
+    Los accesos se arman en el servidor segun el nivel de la sesion, no se esconden
+    con CSS: la barra del mapa muestra "Admin" a cualquiera y recien al entrar
+    redirige, y ofrecer una puerta que va a dar un portazo es peor que no ofrecerla.
+    """
+    if nivel_actual() < 1:
+        return redirect(url_for('login_page'))
+
+    # El pie del landing dice "2001-<ultimo año>" y ese año no puede quedar escrito a
+    # mano: cuando entren datos de un año nuevo, un cartel viejo miente sobre la
+    # cobertura. Sale de la base, con el histórico como piso porque route_monthly
+    # arranca en 2023 (lo anterior vive en historical_2001_2022.json).
+    ultimo = db.session.query(func.max(RouteMonthly.year)).scalar()
+    resp = make_response(render_template(
+        'inicio.html',
+        nombre=session.get('user_nombre', session.get('user_email', 'invitado')),
+        nivel=nivel_actual(),
+        ultimo_anio=ultimo or '2022',
+    ))
+    resp.headers['Cache-Control'] = 'no-store, must-revalidate'
+    resp.headers['Pragma'] = 'no-cache'
+    return resp
+
+
+@app.route('/mapa')
+def mapa_page():
     if nivel_actual() < 1:
         return redirect(url_for('login_page'))
     # no-store en map.html: el archivo se edita seguido y un navegador que se quede con la

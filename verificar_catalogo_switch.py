@@ -84,7 +84,7 @@ check('El contenedor tiene scroll horizontal', 'overflow: auto' in html)
 print('\n--- El switch de aviones regionales está en el mapa')
 with c.session_transaction() as s:
     s['user_email'] = 'test@ypf.com'; s['user_nivel'] = 1
-html = c.get('/').get_data(as_text=True)
+html = c.get('/mapa').get_data(as_text=True)
 check('Existe el botón del switch', 'modelToggleBtn' in html)
 check('Existe la función toggleAssignmentModel', 'function toggleAssignmentModel' in html)
 check('elegirOpcionAvion filtra por fuselaje regional', "fuselaje !== 'regional'" in html)

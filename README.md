@@ -6,8 +6,13 @@ ruta, a partir de las planillas "series históricas" de ANAC.
 
 ## Uso
 
-- `/` — el mapa, `/proyecciones`, `/aerolineas` y `/modelo` — requieren estar
-  logueado con una cuenta de Google autorizada (nivel 1 o más).
+- `/` — la portada: el logo y los accesos en cuadrados a todo lo demás. Los
+  cuadrados se arman en el servidor según el nivel de la sesión, así que nadie
+  ve una puerta que le va a dar un portazo.
+- `/mapa` — el mapa de rutas. **Antes estaba en `/`**; si algo apunta a la raíz
+  esperando el mapa, ahora cae en la portada.
+- `/proyecciones`, `/aerolineas`, `/noticias` y `/modelo` — requieren estar
+  logueado con una cuenta de Google autorizada (nivel 1 o más), igual que el mapa.
 - `/modelo` — explica cómo se arma la proyección de tráfico que llena los
   períodos futuros del mapa, con las cifras del backtest.
 - `/admin` — panel de administración; requiere nivel 2 o más. Los

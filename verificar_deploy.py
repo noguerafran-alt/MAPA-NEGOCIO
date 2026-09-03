@@ -32,7 +32,7 @@ def check(desc, cond, detalle=''):
 
 
 print('--- Marcadores del build NUEVO (deben estar todos)')
-html = c.get('/').get_data(as_text=True)
+html = c.get('/mapa').get_data(as_text=True)
 check('El mapa expone el enlace a Proyecciones', 'proyecciones-link' in html)
 check('El mapa lo posiciona en la barra inferior', 'proyeccionesLink' in html)
 check('Existe la funcion de asignacion por ocupacion', 'resolverAvion' in html)
@@ -48,7 +48,7 @@ check('Sin computeOcupAdjustFactor()', 'computeOcupAdjustFactor' not in html)
 check('Sin PHASE_PARAMS', 'PHASE_PARAMS' not in html)
 
 print('\n--- Cabeceras anti-cache en el HTML del mapa')
-r = c.get('/')
+r = c.get('/mapa')
 cc = r.headers.get('Cache-Control', '')
 check('map.html no se cachea', 'no-store' in cc, f'Cache-Control = {cc!r}')
 
@@ -64,6 +64,25 @@ check('Las rutas traen opciones de avion',
       all(len(m) >= 13 and isinstance(m[12], list) for m in d['cabotaje']['meta'][:20]))
 print(f"      version={d.get('version')!r} tipos={md.get('tipos_en_flota')} "
       f"rutas_reales={md.get('rutas_con_consumo_real')}")
+
+print('\n--- La portada y el ruteo del mapa')
+portada = c.get('/')
+ph = portada.get_data(as_text=True)
+check('/ da 200', portada.status_code == 200, f'status {portada.status_code}')
+check('La portada trae el logo de YPF', '/static/ypf-aviacion.png' in ph)
+check('La portada linkea al mapa en /mapa', 'href="/mapa"' in ph)
+check('La portada no se cachea', 'no-store' in portada.headers.get('Cache-Control', ''))
+check('El mapa dejo de estar en /', 'id="map"' not in ph,
+      'la raiz sigue devolviendo el mapa en vez de la portada')
+check('El logo del mapa vuelve a la portada', 'id="logo-link"' in html)
+# Nivel 1 no tiene que ver el cuadrado de Admin: /admin lo redirige igual, pero
+# ofrecer un acceso y despues negarlo es peor que no ofrecerlo.
+c1 = app.test_client()
+with c1.session_transaction() as s1:
+    s1['user_email'] = 'nivel1@ypf.com'
+    s1['user_nivel'] = 1
+check('Nivel 1 no ve el cuadrado de Admin',
+      'href="/admin"' not in c1.get('/').get_data(as_text=True))
 
 print('\n--- La pagina de proyecciones responde')
 r = c.get('/proyecciones')
