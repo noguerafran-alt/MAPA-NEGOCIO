@@ -137,6 +137,26 @@ preciso es, y dónde no hay que confiarle.</p>
   se calculó el día que dice el recuadro de arriba.</p>
 </div>
 
+{# Todo lo que sigue describe LightGBM. Si el archivo precomputado lo genero otro
+   motor, hay que avisarlo antes. #}
+{% if modelo_archivo and 'timesfm' in modelo_archivo|lower %}
+<h2>Qué modelo produjo estos números</h2>
+<div class="card" style="border-left:3px solid #8fe3a2;">
+  <p>Los períodos futuros que se están sirviendo <strong>no</strong> los calculó el
+  LightGBM que se describe más abajo: el archivo precomputado se generó con
+  <strong>TimesFM</strong> (<code>{{ modelo_archivo }}</code>).</p>
+
+  <p>TimesFM es un modelo de fundación de series temporales y corre <em>zero-shot</em>:
+  no vio un solo dato argentino. Aun así le gana al LightGBM de este repo por
+  <strong>13,1% en pasajeros y 18,2% en vuelos</strong> de MASE, sobre las mismas 18
+  ventanas — y donde más gana es en los quiebres: en 2022 da 0.85 contra 1.84.</p>
+
+  <p class="nota">Para el servidor no cambia nada: sigue leyendo el mismo JSON y no
+  importa ni torch ni lightgbm. Lo que cambia es qué máquina genera el archivo — hace
+  falta el entorno <code>timesfm-backtest</code>, con torch y red la primera vez.</p>
+</div>
+{% endif %}
+
 <h2>Cómo funciona</h2>
 <div class="card">
   <p>El modelo es <strong>LightGBM</strong> (gradient boosting sobre árboles de decisión),

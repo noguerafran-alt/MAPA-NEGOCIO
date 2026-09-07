@@ -38,14 +38,33 @@ MESES_TXT = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
              'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
 
 
+def _version_lightgbm():
+    try:
+        import lightgbm
+        return lightgbm.__version__
+    except ImportError:
+        return '?'
+
+
 def _versiones():
-    import lightgbm
     import numpy
     import pandas
-    return {'lightgbm': lightgbm.__version__,
-            'pandas': pandas.__version__,
-            'numpy': numpy.__version__,
-            'python': '%d.%d.%d' % sys.version_info[:3]}
+    v = {'pandas': pandas.__version__,
+         'numpy': numpy.__version__,
+         'python': '%d.%d.%d' % sys.version_info[:3]}
+    # lightgbm puede no estar: con --modelo timesfm se corre desde otro entorno, y
+    # exigirlo ahi seria pedir la dependencia que justamente se quiere evitar.
+    try:
+        import lightgbm
+        v['lightgbm'] = lightgbm.__version__
+    except ImportError:
+        pass
+    try:
+        import torch
+        v['torch'] = torch.__version__
+    except ImportError:
+        pass
+    return v
 
 
 def _escribir(path, cabecera, filas):
@@ -76,6 +95,10 @@ def main():
                                  'Por defecto, la misma que buscaría la app.')
     ap.add_argument('--meses', type=int, default=12, help='Horizonte, hasta 12 (default: 12).')
     ap.add_argument('--salida', default=SALIDA, help='Dónde escribir el JSON.')
+    ap.add_argument('--modelo', choices=('lightgbm', 'timesfm'), default='lightgbm',
+                    help='Que motor calcula la proyeccion. timesfm gana 13-18%% de MASE '
+                         'pero necesita el entorno timesfm-backtest (torch + red la '
+                         'primera vez). Default: lightgbm, el de siempre.')
     args = ap.parse_args()
 
     if hasattr(sys.stdout, 'reconfigure'):
@@ -89,6 +112,21 @@ def main():
         print('    pip install -r requirements-modelo.txt')
         return 1
 
+    # El motor es intercambiable porque los dos devuelven EXACTAMENTE las mismas
+    # filas: mismo formato, mismas rutas (los dos filtran por "activa en los ultimos
+    # 12 meses") y mismo horizonte. Lo unico que cambia son los numeros. Por eso
+    # proyeccion_archivo.py y el deploy no se enteran de nada.
+    motor, motor_nombre = pf, 'lightgbm %s' % _version_lightgbm()
+    if args.modelo == 'timesfm':
+        try:
+            import proyeccion_timesfm as tfm
+        except ImportError as e:
+            print('No se pudo importar TimesFM: %s' % e)
+            print('Corre este script con el entorno que lo tiene:')
+            print('    %USERPROFILE%\venvs\timesfm-backtest\Scripts\python.exe')
+            return 1
+        motor, motor_nombre = tfm, tfm.descripcion()
+
     if args.db:
         url = args.db if '://' in args.db else 'sqlite:///' + os.path.abspath(args.db)
         pf.usar_base(url)
@@ -96,7 +134,7 @@ def main():
 
     t0 = time.time()
     panel = pf.cargar_panel()
-    filas = pf.rutas_proyectadas(panel, meses=args.meses)
+    filas = motor.rutas_proyectadas(panel, meses=args.meses)
     tardo = time.time() - t0
 
     if not filas:
@@ -108,6 +146,10 @@ def main():
     base_t = int(con_dato['t'].max())
     cabecera = {
         'generado': time.strftime('%Y-%m-%dT%H:%M:%S'),
+        # Que modelo produjo estas filas. Va en el archivo porque el servidor no
+        # puede deducirlo: recibe numeros, no un modelo. Sin esto, /modelo estaria
+        # describiendo LightGBM sobre una proyeccion que quiza no es suya.
+        'modelo': motor_nombre,
         'versiones': _versiones(),
         'meses': args.meses,
         'base': {'t': base_t,
@@ -124,6 +166,7 @@ def main():
     print('proyectado  : %d filas, %d rutas, %d períodos (%.1f s)'
           % (len(filas), len({(f['origin'], f['dest']) for f in filas}),
              len(periodos), tardo))
+    print('modelo      : %s' % motor_nombre)
     print('escrito     : %s (%.0f KB)'
           % (args.salida, os.path.getsize(args.salida) / 1024))
     print()

@@ -146,6 +146,9 @@ def estado(ultimo_real_t=None, path=None):
     return {
         'hay_archivo': True,
         'generado': datos.get('generado'),
+        # Que modelo produjo el archivo. Los JSON viejos no lo traen (se agrego
+        # cuando entro TimesFM), y ahi es LightGBM: era el unico que habia.
+        'modelo': datos.get('modelo') or 'lightgbm',
         'versiones': datos.get('versiones'),
         'base_t': base_t,
         'base_periodo': _bonito(base_t) if base_t is not None else None,

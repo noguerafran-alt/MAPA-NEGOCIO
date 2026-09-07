@@ -2971,6 +2971,10 @@ def modelo_page():
         ctx.update(
             disponible=bool(est['n_filas']),
             fuente='archivo',
+            # Que modelo produjo el archivo. La pagina describe LightGBM entera, asi
+            # que si lo que se sirve salio de otro motor hay que decirlo arriba: una
+            # explicacion de un modelo que no es el que corrio es peor que ninguna.
+            modelo_archivo=est.get('modelo') or 'lightgbm',
             generado=_fecha_bonita(est['generado']),
             base_periodo=est['base_periodo'],
             desactualizada=est['desactualizada'],
