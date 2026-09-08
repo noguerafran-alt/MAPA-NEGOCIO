@@ -392,6 +392,13 @@
           <option value="48">Últimas 48 h</option>
           <option value="168">Últimos 7 días</option>
         </select>
+        <!-- El día se puebla desde el servidor con los que TIENEN datos, y cada opción
+             dice cuántas partidas: un día con 30 y otro con 700 no se leen igual. -->
+        <label for="msrtic-dia" style="margin-left:6px;">Día:</label>
+        <select id="msrtic-dia" onchange="cambiarVentanaMsRtic()">
+          <option value="" selected>—</option>
+        </select>
+        <span id="msrtic-aviso-dia" style="font-size:11.5px; margin-left:8px;"></span>
       </span>
     </div>
     <div class="divider" id="divider-msrtic" style="display:none;"></div>
@@ -1283,17 +1290,55 @@ function msRticTooltip(r) {
 // agregadas daria vuelos y m3 correctos pero un rango de YPF mal, porque el piso y el
 // techo no son sumas de las filas.
 function cambiarVentanaMsRtic() {
+  // Elegir un día apaga la ventana de horas y al revés: son dos cortes distintos del
+  // mismo dato, y dejar los dos puestos daría un subconjunto que nadie pidió.
+  const hs = document.getElementById('msrtic-horas');
+  const dia = document.getElementById('msrtic-dia');
+  if (document.activeElement === dia && dia.value) hs.value = 'todo';
+  if (document.activeElement === hs) dia.value = '';
+  hs.disabled = !!dia.value;
   cargarMsRtic().then(() => render());
+}
+
+// El volumen del día elegido, con el aviso de si el día cerró. Es la diferencia entre
+// "el 8 se vendieron 5.222 m³" y "...HASTA AHORA": mientras el día corre sólo la segunda
+// se puede afirmar, y ese es el caso normal de esta pantalla.
+function msRticAvisoDia() {
+  const el = document.getElementById('msrtic-aviso-dia');
+  if (!el) return;
+  const d = document.getElementById('msrtic-dia').value;
+  if (!msRtic || !msRtic.disponible || !d) { el.textContent = ''; return; }
+  const e = msRtic.estado || {}, r = msRtic.resumen || {};
+  const partidas = e.partidas || 0, salidas = e.despegadas || 0;
+  const parcial = salidas < partidas;
+  el.textContent = `${(r.m3_total || 0).toLocaleString('es-AR', {maximumFractionDigits: 0})} m³`
+    + ` · ${salidas} de ${partidas} despegaron`
+    + (parcial ? ' · falta cerrar el día' : '');
+  el.style.color = parcial ? '#ffd98a' : '#8fe3a2';
 }
 
 function cargarMsRtic() {
   const sel = document.getElementById('msrtic-horas');
   const horas = sel ? sel.value : 'todo';
-  return fetch('/api/msrtic?horas=' + encodeURIComponent(horas)).then(r => r.json()).then(d => {
+  const selDia = document.getElementById('msrtic-dia');
+  const dia = selDia ? selDia.value : '';
+  return fetch('/api/msrtic?horas=' + encodeURIComponent(horas)
+               + (dia ? '&dia=' + encodeURIComponent(dia) : '')).then(r => r.json()).then(d => {
     msRtic = d;
     if (d && d.disponible) {
       document.getElementById('grupo-msrtic').style.display = '';
       document.getElementById('divider-msrtic').style.display = '';
+      // Se repuebla en cada carga: aparece un día nuevo en cuanto el sondeo cruza la
+      // medianoche, sin que haya que recargar la página.
+      if (selDia && d.dias) {
+        const elegido = selDia.value;
+        selDia.innerHTML = '<option value="">—</option>' + d.dias.map(x => {
+          const p = x.dia.split('-');
+          return `<option value="${x.dia}">${p[2]}/${p[1]} (${x.partidas})</option>`;
+        }).join('');
+        selDia.value = elegido;
+      }
+      msRticAvisoDia();
     } else if (d && d.motivo) {
       console.log('MS RTIC no disponible: ' + d.motivo);
     }
@@ -2216,8 +2261,22 @@ function render(skipListRebuild) {
                  : cuenta.proy ? 'm³ proyectados'
                  : 'm³ estimados';
   const m3Label = `${totalM3.toLocaleString('es-AR', {maximumFractionDigits: 0})} ${m3Sufijo}`;
+  // Con MS RTIC activo el período NO es el del histórico: los años y meses de arriba no
+  // aplican, y dejar "Jul 2026" al lado de los totales del 8 de septiembre es peor que no
+  // poner período — afirma una fecha equivocada con total seguridad.
+  let periodoLabel = `${monthsLabel} ${yearsLabel}`;
+  if (msRticActivo) {
+    const dSel = (document.getElementById('msrtic-dia') || {}).value;
+    if (dSel) {
+      const p = dSel.split('-');
+      periodoLabel = `${p[2]}/${p[1]}/${p[0]} (AA2000)`;
+    } else {
+      const hs = (document.getElementById('msrtic-horas') || {}).value;
+      periodoLabel = hs === 'todo' ? 'Todo lo grabado (AA2000)' : `Últimas ${hs} h (AA2000)`;
+    }
+  }
   const aggregateStats =
-    `${monthsLabel} ${yearsLabel} — ${nRoutes} rutas · ${totalVuelos.toLocaleString('es-AR')} vuelos · ${totalPax.toLocaleString('es-AR')} pasajeros · ${m3Label} · grosor = ${METRIC_LABELS[activeMetric]}`;
+    `${periodoLabel} — ${nRoutes} rutas · ${totalVuelos.toLocaleString('es-AR')} vuelos · ${totalPax.toLocaleString('es-AR')} pasajeros · ${m3Label} · grosor = ${METRIC_LABELS[activeMetric]}`;
 
   if (airportFilterMode === 'none') {
     document.getElementById('stats').textContent = 'Ningún aeropuerto seleccionado (elegí uno o más, o "Todos")';

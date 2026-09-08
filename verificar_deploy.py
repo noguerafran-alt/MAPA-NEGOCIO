@@ -34,7 +34,13 @@ def check(desc, cond, detalle=''):
 print('--- Marcadores del build NUEVO (deben estar todos)')
 html = c.get('/mapa').get_data(as_text=True)
 check('El mapa expone el enlace a Proyecciones', 'proyecciones-link' in html)
-check('El mapa lo posiciona en la barra inferior', 'proyeccionesLink' in html)
+# `proyeccionesLink` era la implementacion VIEJA: JS que le calculaba el `right` a cada
+# acceso, uno por uno. La reemplazo el sistema de zonas del mapa local -- `medirZonas()`
+# mide las franjas y los accesos se acomodan con flexbox -- asi que buscar ese nombre daba
+# un falso negativo: el marcador desaparecio porque la implementacion mejoro, no porque la
+# barra se rompiera. Verificado en el navegador: los 6 accesos visibles, sin solaparse y
+# dentro de la ventana.
+check('El mapa acomoda la barra inferior', 'medirZonas' in html and 'barra-inferior' in html)
 check('Existe la funcion de asignacion por ocupacion', 'resolverAvion' in html)
 check('El tooltip usa el texto nuevo', 'Avión asignado:' in html)
 check('El selector de avion usa la flota calibrada', 'en_escalera' in html)
