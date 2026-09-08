@@ -1193,10 +1193,17 @@ def api_msrtic():
         horas = None if horas in ('', 'todo') else float(horas)
     except ValueError:
         horas = None
+    # El dia manda sobre la ventana de horas: son dos cortes distintos del mismo dato y
+    # combinarlos daria un subconjunto que nadie pidio.
+    dia = (request.args.get('dia') or '').strip() or None
     try:
-        filas, est = msrtic.filas(horas)
+        filas, est = msrtic.filas(horas, dia=dia)
         return jsonify({'disponible': True, 'filas': filas,
-                        'resumen': msrtic.resumen(horas), 'estado': est,
+                        'resumen': msrtic.resumen(horas, dia=dia), 'estado': est,
+                        # Los dias que EXISTEN, con su conteo: el selector se puebla con
+                        # esto y no con un calendario donde casi todo esta vacio, y el
+                        # conteo deja ver que el dia en curso esta a medio sondear.
+                        'dias': msrtic.dias_disponibles(),
                         'poller': est_poller})
     except Exception as e:
         app.logger.warning('MS RTIC fallo: %s: %s', type(e).__name__, e)

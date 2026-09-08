@@ -215,6 +215,42 @@ def _coords():
             if a.lat is not None and a.lon is not None}
 
 
+def dia_de(partida):
+    """El dia LOCAL en que la partida despego, 'AAAA-MM-DD', o None.
+
+    La hora REAL manda sobre la programada: un vuelo programado 23:50 que sale 00:20
+    cargo combustible el dia siguiente, y para "cuanto se vendio el dia 8" lo que cuenta
+    es cuando salio, no cuando estaba previsto.
+
+    Y es dia local, no UTC. AA2000 publica en hora argentina y la pregunta -- "cuanto se
+    vendio el 8 de septiembre" -- es sobre el dia del calendario de acá; agrupando por
+    UTC, todo lo que sale despues de las 21:00 se contaria al dia siguiente.
+    """
+    ep = partida.get('real_epoch') or partida.get('programada_epoch')
+    if not ep:
+        return None
+    return time.strftime('%Y-%m-%d', time.localtime(ep))
+
+
+def dias_disponibles():
+    """[{'dia', 'partidas', 'despegadas'}] de mas nuevo a mas viejo.
+
+    Sirve para poblar el selector con lo que EXISTE en vez de un calendario donde casi
+    todas las fechas no tienen nada. Y trae el conteo porque un dia con 30 partidas y
+    otro con 700 no se pueden leer igual: el primero esta a medio sondear.
+    """
+    cuenta = {}
+    for p in _partidas(None):
+        d = dia_de(p)
+        if not d:
+            continue
+        c = cuenta.setdefault(d, {'dia': d, 'partidas': 0, 'despegadas': 0})
+        c['partidas'] += 1
+        if p.get('real_epoch'):
+            c['despegadas'] += 1
+    return sorted(cuenta.values(), key=lambda c: c['dia'], reverse=True)
+
+
 def _partidas(horas):
     """Las partidas de la base del radar.
 
@@ -238,7 +274,7 @@ def _partidas(horas):
         con.close()
 
 
-def calcular(horas=24.0, coords=None):
+def calcular(horas=24.0, coords=None, dia=None):
     """(filas, estado). Una fila por ruta-aerolinea, con vuelos, pax y m3.
 
     `horas` mira hacia atras desde ahora sobre la hora PROGRAMADA de salida. 24 es
@@ -267,7 +303,11 @@ def calcular(horas=24.0, coords=None):
         else:
             clasif = 'planilla'
 
-    crudas = _partidas(horas)
+    # Con un dia pedido se ignora la ventana de horas: son dos formas distintas de
+    # cortar lo mismo y combinarlas daria un subconjunto que nadie pidio.
+    crudas = _partidas(None if dia else horas)
+    if dia:
+        crudas = [p for p in crudas if dia_de(p) == dia]
     coords = _coords() if coords is None else coords
 
     mats = {_norm_matricula(p.get('matricula')) for p in crudas}
@@ -275,7 +315,11 @@ def calcular(horas=24.0, coords=None):
     tipos = _tipos_por_matricula(mats)
     flota = avion_model.get_flota()
 
-    est = {'partidas': len(crudas), 'con_matricula': 0, 'tipo_resuelto': 0,
+    est = {'partidas': len(crudas), 'dia': dia,
+           # Cuantas de las partidas del periodo ya despegaron. Con el dia en curso esto
+           # es lo que dice si el volumen esta completo o a mitad de camino.
+           'despegadas': sum(1 for p in crudas if p.get('real_epoch')),
+           'con_matricula': 0, 'tipo_resuelto': 0,
            'sin_flota': 0, 'avion_medido': 0, 'avion_estimado': 0,
            'sin_ruta': 0, 'sin_consumo': 0, 'sin_pax': 0,
            'iata_desconocidos': {}, 'tipos_sin_flota': {},
@@ -429,25 +473,25 @@ def _clave_de_archivo():
         return None
 
 
-def filas(horas=24.0, usar_cache=True):
+def filas(horas=24.0, usar_cache=True, dia=None):
     """Las filas del filtro, cacheadas hasta que el radar vuelva a escribir."""
-    clave = (_clave_de_archivo(), horas)
+    clave = (_clave_de_archivo(), horas, dia)
     with _lock:
         if usar_cache and _cache['clave'] == clave and _cache['filas'] is not None:
             return _cache['filas'], _cache['estado']
-        fs, est = calcular(horas)
+        fs, est = calcular(horas, dia=dia)
         _cache['clave'], _cache['filas'], _cache['estado'] = clave, fs, est
         return fs, est
 
 
-def resumen(horas=24.0):
+def resumen(horas=24.0, dia=None):
     """Lo que necesita el banner del mapa: totales y el rango de YPF.
 
     El share va como RANGO. Con la lista de clientes no exhaustiva, el piso son los
     m3 de los clientes confirmados y el techo suma los sin clasificar; dar un numero
     solo seria elegir uno de los dos sin decirlo.
     """
-    fs, est = filas(horas)
+    fs, est = filas(horas, dia=dia)
     tot = sum(f['m3'] for f in fs)
     por = {}
     for f in fs:
