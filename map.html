@@ -22,7 +22,8 @@
      Las dos variables las publica `medirZonas()` con un ResizeObserver: son
      la altura real de las franjas superior e inferior, medidas y no supuestas.
      Los paneles laterales las usan para limitar su alto y no invadirlas. */
-  :root { --alto-superior: 120px; --alto-inferior: 60px; --escala: 1; }
+  :root { --alto-superior: 120px; --alto-inferior: 60px; --escala: 1;
+          --reserva-derecha: 300px; }
 
   /* PANTALLAS GRANDES. Una TV 4K de 50" reporta 3840px, los mismos píxeles CSS
      que un monitor, pero se mira desde tres metros en vez de sesenta centímetros:
@@ -59,7 +60,12 @@
   #barra-inferior-der { max-width: 100%; }
   #zona-superior > *, #barra-inferior > * { pointer-events: auto; }
 
-  #zona-superior { top: 14px; flex-direction: column; align-items: flex-start; }
+  /* El padding reserva el rincón de arriba a la derecha (barra de Plotly + la X) para
+     que el panel de controles no crezca por encima de ellos. Dividido por la escala,
+     como el resto de la geometría: adentro de un elemento con `zoom` las longitudes se
+     multiplican al pintar, y `--reserva-derecha` viene medida en píxeles reales. */
+  #zona-superior { top: 14px; flex-direction: column; align-items: flex-start;
+                   padding-right: calc(var(--reserva-derecha) / var(--escala)); }
   #barra-inferior { bottom: 14px; align-items: flex-end; }
   #barra-inferior-izq { display: flex; flex-direction: column; gap: 8px;
                         flex: 1 1 auto; min-width: 0; align-items: flex-start; }
@@ -2362,6 +2368,39 @@ function selectAllMonths() {
     const raiz = document.documentElement;
     raiz.style.setProperty('--alto-superior', Math.ceil(sup.getBoundingClientRect().height) + 'px');
     raiz.style.setProperty('--alto-inferior', Math.ceil(inf.getBoundingClientRect().height) + 'px');
+
+    // Arriba a la derecha vive algo que NO es de la franja: la barra de herramientas
+    // de Plotly (cámara, zoom, mano). El panel de controles crece hacia la derecha con
+    // su contenido y en una pantalla grande llega a taparla. Se mide dónde empieza y se
+    // reserva ese ancho, en vez de clavar un número: la barra cambia de ancho sola con
+    // el zoom de las pantallas grandes.
+    //
+    // `#cerrar-mapa` es la X del mapa local, que acá no existe: esta versión se abre en
+    // el navegador y no en un kiosco. El selector se deja igual que allá -- el bucle
+    // ignora lo que no encuentra -- para que las dos versiones midan con el mismo
+    // código y esto siga andando si algún día se porta cierre.js.
+    let borde = window.innerWidth;
+    ['.js-plotly-plot .modebar', '#cerrar-mapa'].forEach(sel => {
+      const e = document.querySelector(sel);
+      if (!e) return;
+      const r = e.getBoundingClientRect();
+      if (r.width && r.left < borde) borde = r.left;
+    });
+    const reserva = Math.max(0, Math.ceil(window.innerWidth - borde) + 12);
+    raiz.style.setProperty('--reserva-derecha', reserva + 'px');
+
+    // Plotly dibuja su barra DESPUÉS de que render() termina, así que la primera
+    // medición la encuentra vacía y reserva sólo el ancho de la X. Se reintenta en el
+    // cuadro siguiente hasta que aparezca, y una vez que está se la observa: cambia de
+    // ancho sola cuando el zoom de las pantallas grandes le agranda los botones.
+    const barra = document.querySelector('.js-plotly-plot .modebar');
+    if (!barra) {
+      if (medirZonas._intentos == null) medirZonas._intentos = 0;
+      if (medirZonas._intentos++ < 30) requestAnimationFrame(medirZonas);
+    } else if (!barra._observada && window.ResizeObserver) {
+      barra._observada = true;
+      new ResizeObserver(medirZonas).observe(barra);
+    }
   }
 
   // Nombre viejo: quedan llamadas desde render() y desde el chequeo de combustible.
