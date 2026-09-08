@@ -69,22 +69,36 @@
     /* Debajo de la barra de controles (top:14px, ~40px de alto), no encima: centrado a
        top:14px quedaba pisando los selectores de Año y Mes justo cuando el usuario los
        está usando, que es el único momento en que este aviso importa. */
-    position: fixed; top: 66px; left: 50%; transform: translateX(-50%);
-    z-index: 20; display: none; max-width: 620px;
+    /* Dentro del encabezado y pegado a la derecha, no flotando debajo: ahi tapaba el
+       mapa y quedaba lejos del titulo que describe. Al ser un hijo mas del header ya no
+       hace falta el `position: fixed` con el top calculado a mano. */
+    margin-left: auto; align-self: center;
+    z-index: 20; display: none; max-width: 360px;
     background: rgba(60,44,10,0.94); backdrop-filter: blur(6px);
     border: 1px solid #b98b2a; border-radius: 10px;
-    padding: 8px 16px; color: #ffd98a; font-size: 12.5px; text-align: center;
+    padding: 6px 12px; color: #ffd98a; font-size: 11.5px; text-align: left;
+    line-height: 1.45;
   }
   #proy-warning b { color: #ffe9b8; }
 
   #fuel-diag-warning {
-    position: fixed; bottom: 52px; left: 14px; z-index: 10; max-width: 480px;
-    background: rgba(59,40,10,0.92); backdrop-filter: blur(6px);
-    border: 1px solid #6b551f; border-radius: 10px;
-    padding: 9px 14px; color: #e3c98a; font-size: 12px; line-height: 1.5;
-    display: none; cursor: pointer;
+    /* DISCRETO A PROPOSITO. Es un aviso de mantenimiento -- faltan asociar aeroplantas
+       a aeropuertos -- no un problema del dato que se esta mirando, y con el tamano y el
+       contraste de antes competia con los totales. Se atenua y se recorta; al pasar el
+       mouse se lee entero y sigue llevando a /admin de un click. Esconderlo del todo no:
+       entonces nadie asociaria nunca esas aeroplantas. */
+    position: fixed; bottom: 52px; left: 14px; z-index: 10; max-width: 300px;
+    background: rgba(59,40,10,0.55);
+    border: 1px solid rgba(107,85,31,0.5); border-radius: 8px;
+    padding: 5px 9px; color: #a8946a; font-size: 10.5px; line-height: 1.35;
+    display: none; cursor: pointer; opacity: 0.6;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    transition: opacity .15s, background .15s;
   }
-  #fuel-diag-warning:hover { background: rgba(74,52,15,0.95); }
+  #fuel-diag-warning:hover {
+    background: rgba(74,52,15,0.95); opacity: 1; color: #e3c98a;
+    white-space: normal; max-width: 480px;
+  }
 
   #route-panel {
     position: fixed; top: 78px; right: 14px; z-index: 10;
@@ -245,6 +259,7 @@
       <h1 id="mainTitle">MAPA DE RUTAS INT/CAB</h1>
       <div id="subtitle">Vuelos, pasajeros y ocupación por ruta — Fuente: ANAC, series históricas 2001-2026</div>
     </div>
+    <div id="proy-warning"></div>
   </div>
   <div id="controls">
     <div class="ctrl-group" style="position: relative;">
@@ -263,6 +278,29 @@
       <button class="toggle-btn active" id="btn-cabotaje" onclick="toggleType('cabotaje')">Cabotaje</button>
       <button class="toggle-btn active" id="btn-internacional" onclick="toggleType('internacional')">Internacional</button>
     </div>
+    <div class="divider"></div>
+    <!-- MS RTIC. Se muestra sólo si el radar dejó datos; en la PC del kiosco este
+         grupo entero queda oculto y el mapa es exactamente el de siempre. -->
+    <div class="ctrl-group" id="grupo-msrtic" style="display:none;"
+         title="Consumo calculado con las partidas que publica Aeropuertos Argentina hoy, no con el histórico de ANAC. Es la única vista que abre cada ruta en las aerolíneas que la operan.">
+      <button id="btn-msrtic" class="toggle-btn" onclick="toggleMsRtic()">MS RTIC</button>
+      <span id="msrtic-sub" style="display:none;">
+        <label for="btn-msrtic-ypf" style="margin-left:6px;">Mostrar:</label>
+        <button id="btn-msrtic-ypf" class="toggle-btn" onclick="toggleMsRticYpf()">Todo el mercado</button>
+        <!-- La ventana de tiempo. El default es "todo lo grabado" y no 24 h: el feed
+             de AA2000 es una pantalla de ~2 dias, asi que lo que hay acumulado es lo
+             que se sondeo alguna vez. Recortar a 24 h por defecto esconderia
+             grabaciones anteriores sin decirlo. -->
+        <label for="msrtic-horas" style="margin-left:6px;">Ventana:</label>
+        <select id="msrtic-horas" onchange="cambiarVentanaMsRtic()">
+          <option value="todo" selected>Todo lo grabado</option>
+          <option value="24">Últimas 24 h</option>
+          <option value="48">Últimas 48 h</option>
+          <option value="168">Últimos 7 días</option>
+        </select>
+      </span>
+    </div>
+    <div class="divider" id="divider-msrtic" style="display:none;"></div>
     <div class="divider"></div>
     <div class="ctrl-group" title="Con el modelo activado, rutas de baja ocupación se calculan con avión regional (Embraer 190 o CRJ200) en vez de forzar un narrowbody grande como A320/737. Apagalo para comparar cuánto cambia el volumen estimado si siempre se asumiera un avión grande.">
       <label for="modelToggleBtn">Avión regional si &lt;100 pax/vuelo:</label>
@@ -286,7 +324,6 @@
   </div>
 </div>
 
-<div id="proy-warning"></div>
 <div id="stats"></div>
 <div id="fuel-diag-warning" onclick="window.open('/admin', '_blank')" title="Click para abrir /admin y agregar el alias"></div>
 
@@ -452,6 +489,11 @@ function ultimoAnioReal() {
   return conDatos.length ? conDatos[conDatos.length - 1]
                          : DATA.years[DATA.years.length - 1];
 }
+
+// MS RTIC va en su propio fetch y NO se espera para dibujar el mapa: depende de que el
+// poller haya dado su primera vuelta, y hacer que el mapa arranque más tarde por una
+// capa opcional sería pagar con lo que sí funciona.
+cargarMsRtic();
 
 fetch('/api/data').then(r => r.json()).then(d => {
   DATA = d;
@@ -1006,6 +1048,163 @@ function toggleType(t) {
   activeTypes[t] = !activeTypes[t];
   document.getElementById('btn-' + t).classList.toggle('active');
   render();
+}
+
+// ---------- MS RTIC: las partidas de hoy, abiertas por aerolínea ----------
+//
+// Es una FUENTE DISTINTA, no un filtro sobre el histórico. El histórico de ANAC viene
+// agregado por ruta-mes y no dice quién voló; esto son las partidas que publica
+// Aeropuertos Argentina, una por una, con su aerolínea y su matrícula. Por eso cuando
+// está activo reemplaza los candidatos en vez de tamizarlos: los años y meses de arriba
+// no aplican, porque acá el período es "hoy".
+//
+// El consumo lo pone el mismo modelo del mapa. Donde AA2000 publica la matrícula, el
+// avión es el REAL (se cruza contra el registro de la antena); donde no —6 de cada 10
+// partidas— se estima con `seleccionar_avion`, igual que el histórico. Cada ruta dice
+// cuántos de sus aviones fueron medidos y cuántos estimados: un total de m³ que no
+// distingue una cosa de la otra no se puede auditar.
+let msRtic = null;          // respuesta de /api/msrtic
+let msRticActivo = false;
+let msRticSoloYpf = false;
+
+function toggleMsRtic() {
+  msRticActivo = !msRticActivo;
+  document.getElementById('btn-msrtic').classList.toggle('active', msRticActivo);
+  document.getElementById('msrtic-sub').style.display = msRticActivo ? '' : 'none';
+  render();
+}
+
+function toggleMsRticYpf() {
+  msRticSoloYpf = !msRticSoloYpf;
+  const b = document.getElementById('btn-msrtic-ypf');
+  b.textContent = msRticSoloYpf ? 'Sólo YPF' : 'Todo el mercado';
+  b.classList.toggle('active', msRticSoloYpf);
+  render();
+}
+
+// Las filas que corresponden al sub-switch.
+//
+// "Sólo YPF" deja las rutas que la planilla declara de YPF y las del interior (que no
+// salen de AEP/EZE/COR y por eso son de YPF por estructura del mercado). NO incluye las
+// competitivas sin declarar: esas son justamente las que no se pueden afirmar, y
+// meterlas acá sería contar como propio lo que todavía no se sabe.
+function msRticFilas() {
+  if (!msRtic || !msRtic.disponible) return [];
+  const fs = msRtic.filas || [];
+  return msRticSoloYpf ? fs.filter(f => f.proveedor === 'YPF') : fs;
+}
+
+// Los candidatos del mapa, con el MISMO shape que arma el histórico, para que el dibujo,
+// el filtro por aeropuerto y los totales no se enteren de nada.
+//
+// Una ruta puede tener varias aerolíneas: se suman para dibujar la línea, y el
+// desagregado se guarda en `aerolineas` para el tooltip. Sumar y perder el detalle
+// tiraría lo único que esta vista aporta sobre el histórico.
+function msRticCandidatos() {
+  const porRuta = new Map();
+  for (const f of msRticFilas()) {
+    if (!activeTypes[f.tipo]) continue;
+    if (f.olat == null || f.dlat == null) continue;   // sin coordenadas no se dibuja
+    const k = f.tipo + '|' + f.origin + '|' + f.dest;
+    let c = porRuta.get(k);
+    if (!c) {
+      c = { o: f.origin, d: f.dest, olat: f.olat, olon: f.olon, dlat: f.dlat,
+            dlon: f.dlon, tipo: f.tipo, vuelos: 0, pax: 0, vuelosConPax: 0,
+            consumoM3: 0, medidos: 0, estimados: 0, distanciaKm: f.distancia_km,
+            aerolineas: [], proveedor: f.proveedor, motivo: f.motivo,
+            avionCodigo: null, avion: null, asientos: null, consumoKg: null,
+            avionFuente: null, avionEsReal: false, loadFactor: null, opciones: [] };
+      porRuta.set(k, c);
+    }
+    c.vuelos += f.vuelos;
+    c.pax += (f.pax || 0);
+    c.vuelosConPax += (f.vuelos_con_pax || 0);
+    c.consumoM3 += f.m3;
+    c.medidos += f.aviones_medidos;
+    c.estimados += f.aviones_estimados;
+    c.aerolineas.push(f);
+    // Todas las aerolíneas de una ruta comparten proveedor: la planilla de YPF está
+    // armada por ruta dirigida, no por aerolínea. Si difieren, gana 'sin_declarar'
+    // para no afirmar de más.
+    if (c.proveedor !== f.proveedor) c.proveedor = 'sin_declarar';
+  }
+  const out = [];
+  for (const c of porRuta.values()) {
+    // La ocupación sólo se calcula sobre los vuelos que informaron pasajeros. Dividir
+    // por el total daría una ocupación falsamente baja en el 79% de los casos, que es
+    // la proporción de partidas sin pasajeros publicados.
+    c.ocup = (c.pax && c.vuelosConPax)
+      ? Math.round((c.pax / c.vuelosConPax) * 10) / 10 : null;
+    // consumoM3 tiene que ser POR VUELO, no el total de la ruta: todo el mapa lo
+    // multiplica por `vuelos` (los totales, el tooltip, la tabla y el ranking de
+    // aeropuertos). Poniendo el total acá, el consumo se multiplicaba dos veces --
+    // daba 28.336 m³ donde el backend dice 5.547, y el número inflado no se ve como
+    // un error: se ve como un mapa con mucho consumo.
+    c.m3Total = Math.round(c.consumoM3 * 10) / 10;
+    c.consumoM3 = c.vuelos ? c.m3Total / c.vuelos : 0;
+    c.consumoKg = c.consumoM3 * (MODELO.kg_por_m3 || 800);
+    c.aerolineas.sort((a, b) => b.m3 - a.m3);
+    c.avionCodigo = c.aerolineas[0] && c.aerolineas[0].aviones[0] || null;
+    c.avionEsReal = c.medidos > 0;
+    out.push(c);
+  }
+  out.sort((a, b) => (a.o + a.d).localeCompare(b.o + b.d));
+  return out;
+}
+
+// El desagregado por aerolínea, que es lo único que esta vista aporta sobre el
+// histórico: ANAC informa "AEP→BRC: 851 vuelos" y no dice de quién son.
+//
+// El proveedor va ARRIBA y una sola vez, no por aerolínea, porque es propiedad de la
+// RUTA: la planilla de YPF está armada por ruta dirigida, así que si Aerolíneas y
+// Flybondi hacen AEP→BRC, las dos cargan con el mismo. Repetirlo en cada renglón daría
+// a entender que se sabe aerolínea por aerolínea, que es justo lo que no se sabe.
+function msRticTooltip(r) {
+  const NOMBRE = { planilla: 'declarado en la planilla',
+                   interior: 'interior: no sale de AEP/EZE/COR',
+                   ruta_no_declarada: 'ruta competitiva sin declarar',
+                   sin_planilla: 'sin planilla cargada' };
+  let s = `<b>⏱ MS RTIC — partidas de hoy</b><br>`;
+  s += `Abastece: <b>${r.proveedor === 'sin_declarar' ? 'sin declarar' : r.proveedor}</b>`;
+  s += ` <i>(${NOMBRE[r.motivo] || r.motivo})</i><br>`;
+  s += `<b>Consumo por aerolínea</b><br>`;
+  for (const f of r.aerolineas.slice(0, 8)) {
+    s += `  • ${f.aerolinea}: ${f.m3.toLocaleString('es-AR',{maximumFractionDigits:0})} m³`
+       + ` (${f.vuelos} ${f.vuelos === 1 ? 'vuelo' : 'vuelos'})<br>`;
+  }
+  if (r.aerolineas.length > 8) s += `  • … y ${r.aerolineas.length - 8} más<br>`;
+  // Medido vs estimado, siempre a la vista: 6 de cada 10 partidas no publican
+  // matrícula y su avión sale del modelo, no del registro.
+  s += `<i>Avión: ${r.medidos} por matrícula, ${r.estimados} estimado`
+     + `${r.estimados === 1 ? '' : 's'}</i><br>`;
+  if (r.vuelosConPax < r.vuelos) {
+    s += `<i>Pasajeros informados en ${r.vuelosConPax} de ${r.vuelos} vuelos</i><br>`;
+  }
+  return s + '<br>';
+}
+
+// Se pide una sola vez al abrir. Si el radar no dejó datos, el grupo de controles no
+// se muestra: un botón que al apretarlo no hace nada es peor que no tenerlo.
+// Cambiar la ventana obliga a volver al servidor: la agregacion por ruta-aerolinea y
+// el rango de YPF se calculan alla, sobre las partidas crudas. Recortar aca las filas ya
+// agregadas daria vuelos y m3 correctos pero un rango de YPF mal, porque el piso y el
+// techo no son sumas de las filas.
+function cambiarVentanaMsRtic() {
+  cargarMsRtic().then(() => render());
+}
+
+function cargarMsRtic() {
+  const sel = document.getElementById('msrtic-horas');
+  const horas = sel ? sel.value : 'todo';
+  return fetch('/api/msrtic?horas=' + encodeURIComponent(horas)).then(r => r.json()).then(d => {
+    msRtic = d;
+    if (d && d.disponible) {
+      document.getElementById('grupo-msrtic').style.display = '';
+      document.getElementById('divider-msrtic').style.display = '';
+    } else if (d && d.motivo) {
+      console.log('MS RTIC no disponible: ' + d.motivo);
+    }
+  }).catch(e => console.log('MS RTIC no disponible: ' + e));
 }
 
 // ---------- Selección de avión por ocupación (espejo de avion_model.py) ----------
@@ -1623,7 +1822,14 @@ function render(skipListRebuild) {
   let totalVuelos = 0, totalPax = 0, nRoutes = 0, totalM3 = 0;
 
   const candidates = []; // all routes available for current type+period (unfiltered by user selection)
-  if (skipListRebuild) {
+  if (msRticActivo) {
+    // MS RTIC no es un filtro sobre el histórico: es otra fuente, con su propio
+    // período ("hoy"). Se saltea el armado desde DATA por completo, y de ahí para
+    // abajo todo el render sigue igual porque el shape es el mismo.
+    candidates.push(...msRticCandidatos());
+    lastCandidates = candidates;
+    if (!skipListRebuild) updateRouteList(candidates);
+  } else if (skipListRebuild) {
     candidates.push(...lastCandidates);
   } else {
     for (const tipo of ['cabotaje', 'internacional']) {
@@ -1699,10 +1905,15 @@ function render(skipListRebuild) {
       lat: lats,
       // Punteado = proyección. La forma de la línea distingue el dato estimado del
       // medido incluso cuando el usuario no está mirando el aviso de arriba.
-      line: { width: width, color: routeColor, dash: hayProyeccion ? 'dot' : 'solid' },
+      // Linea llena tambien cuando es proyeccion. El punteado se leia como "ruta
+      // secundaria" y ademas ensuciaba el mapa cuando el periodo elegido es futuro y
+      // TODAS las lineas quedaban punteadas. Que el dato es estimado lo dice el cartel
+      // del encabezado, que es donde se mira una vez y vale para toda la pantalla.
+      line: { width: width, color: routeColor, dash: 'solid' },
       opacity: isDimmed ? 0.12 : 1,
       hoverinfo: 'text',
       text: (hayProyeccion ? `<b>◇ PROYECTADO</b><br>` : '') +
+            (r.aerolineas ? msRticTooltip(r) : '') +
             `${r.o} → ${r.d}<br>Vuelos: ${r.vuelos.toLocaleString('es-AR')}<br>Pasajeros: ${(r.pax||0).toLocaleString('es-AR')}<br>Ocupación: ${r.ocup != null ? r.ocup : 'N/D'} pax/vuelo` +
             (r.avion ? `<br>Avión asignado: ${r.avion} (${r.asientos||0} asientos)` +
               (r.loadFactor != null ? ` — ${(r.loadFactor*100).toLocaleString('es-AR',{maximumFractionDigits:0})}% de ocupación` : '') +

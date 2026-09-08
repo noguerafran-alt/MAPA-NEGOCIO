@@ -154,3 +154,43 @@ python proyeccion_modelo.py
 Cada vez que ANAC publique una planilla nueva, subila desde `/admin`. Los
 meses/años que ya existen se actualizan (se pisan), los nuevos se agregan.
 Nada se borra ni se duplica.
+
+## MS RTIC — consumo por ruta y aerolínea, en vivo
+
+El histórico de ANAC viene agregado por ruta-mes y no dice quién voló. MS RTIC son las
+partidas que publica Aeropuertos Argentina, una por una, con aerolínea y matrícula, así
+que abre cada ruta en las aerolíneas que la operan y le pone a cada una su consumo. El
+combustible lo calcula `avion_model`, el mismo del mapa: no hay un segundo cálculo.
+
+```
+sondeo.py       poller cada 5 min, adentro del proceso web
+msrtic.py       cruza matrícula -> avión, clasifica proveedor y calcula m3
+proveedores.py  quién abastece cada ruta (viene de RADAR-MARKET-SHARE)
+/api/msrtic     las filas. NIVEL 1: no es público
+```
+
+**Está detrás del login y no es por costumbre.** `datos/proveedores.json` dice qué rutas
+abastece YPF y cuáles Axion o Raizen, y eso no es información pública. El resto del
+módulo sí lo es (el feed de AA2000 y el registro de OpenSky son abiertos), pero el
+endpoint entero exige nivel 1 porque el payload los lleva juntos. Los usuarios los crea
+el admin, así que detrás del login sólo hay gente de YPF.
+
+**Por qué un hilo y no un cron.** Lo decide `render.yaml`: plan `starter` (no se suspende,
+el hilo no duerme), `--workers 1` (una sola instancia, el poller no se duplica) y disco
+persistente en `/var/data` (el acumulado sobrevive los deploys). Con eso, un hilo es cero
+infraestructura nueva y `aa2000.py` es stdlib pura: no agrega dependencias.
+
+**Si algún día se sube a 2 workers, esto hay que mover a un cron.** Dos pollers sobre la
+misma SQLite se pisan, y el síntoma no sería un error sino filas trabadas y sondeos
+perdidos.
+
+**Las dos bases van en el disco, no en el repo.** `aa2000_oficial.db` la escribe el
+poller; `aircraft_db.sqlite` son 52 MB y se construye una vez desde OpenSky, en
+background — si el arranque esperara esa descarga, un deploy tardaría minutos y un fallo
+de red dejaría el servicio sin levantar. Mientras no esté, MS RTIC funciona igual con
+todos los aviones estimados por el modelo del mapa: pierde precisión, no funcionalidad.
+
+Medido contra el feed en vivo: de 492 partidas, 205 publican matrícula (42%) y 187
+terminan con un tipo que el mapa sabe consumir (38%). Las otras se estiman con
+`seleccionar_avion`, y cada fila dice cuántos de sus aviones fueron medidos y cuántos
+estimados: un total de m³ que no distingue una cosa de la otra no se puede auditar.

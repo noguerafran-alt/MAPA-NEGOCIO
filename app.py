@@ -50,6 +50,22 @@ except Exception as _e:                                  # pragma: no cover
 # Este import es stdlib pura: no puede fallar por memoria ni por falta de wheel.
 import proyeccion_archivo
 
+# MS RTIC: consumo por ruta Y AEROLINEA con las partidas que publica AA2000. Va detras
+# del login (nivel 1) porque datos/proveedores.json dice que rutas abastece cada
+# petrolera, y eso no es publico -- el resto del modulo si lo es.
+#
+# El import va guardado: si msrtic o el poller fallan, la pagina tiene que seguir
+# levantando. Se pierde una capa, no el mapa.
+try:
+    import msrtic
+    import sondeo
+    sondeo.arrancar()
+    MSRTIC_ERROR = None
+except Exception as _e:                                  # pragma: no cover
+    msrtic = None
+    sondeo = None
+    MSRTIC_ERROR = '%s: %s' % (type(_e).__name__, _e)
+
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-change-me')
 if app.secret_key == 'dev-secret-change-me' and os.environ.get('RENDER'):
@@ -1005,6 +1021,50 @@ def _ultimo_t_real_db():
         return max(ts)
     hist_routes, _ = get_historical_rows()
     return _ultimo_t_real(hist_routes)
+
+
+@app.route('/api/msrtic')
+@limiter.limit("30 per minute")
+def api_msrtic():
+    """Consumo por ruta y aerolinea con las partidas que publica AA2000.
+
+    NIVEL 1: el payload incluye que petrolera abastece cada ruta, que sale de una
+    planilla interna. Los usuarios los crea el admin, asi que detras del login solo hay
+    gente de YPF. Sin esto, un visitante anonimo veria las rutas de la competencia.
+
+    Va SEPARADO de /api/data y no adentro: /api/data arma el payload comprimido del
+    historico (una fila por ruta, agregada por mes) y todo el mapa cuelga de esa forma;
+    esto tiene una dimension mas -- la aerolinea -- y ademas cambia cada 5 minutos, no
+    cada mes: no tienen por que compartir cache.
+
+    Devuelve `disponible: false` con el motivo en vez de un 404: la pagina tiene que
+    poder explicar por que el filtro no esta, y un 404 no explica nada.
+    """
+    if nivel_actual() < 1:
+        return jsonify({"error": "No autorizado"}), 401
+    if msrtic is None:
+        return jsonify({'disponible': False,
+                        'motivo': 'msrtic no se pudo importar: %s' % MSRTIC_ERROR})
+    est_poller = sondeo.estado() if sondeo is not None else {}
+    if not msrtic.disponible():
+        # Recien deployado el poller todavia no dio su primera vuelta: no es un error,
+        # es que hay que esperar. Se dice cuanto falta.
+        return jsonify({'disponible': False, 'poller': est_poller,
+                        'motivo': 'el poller todavia no completo su primer sondeo'})
+    try:
+        horas = request.args.get('horas', 'todo')
+        horas = None if horas in ('', 'todo') else float(horas)
+    except ValueError:
+        horas = None
+    try:
+        filas, est = msrtic.filas(horas)
+        return jsonify({'disponible': True, 'filas': filas,
+                        'resumen': msrtic.resumen(horas), 'estado': est,
+                        'poller': est_poller})
+    except Exception as e:
+        app.logger.warning('MS RTIC fallo: %s: %s', type(e).__name__, e)
+        return jsonify({'disponible': False, 'poller': est_poller,
+                        'motivo': '%s: %s' % (type(e).__name__, e)})
 
 
 @app.route('/api/data')
