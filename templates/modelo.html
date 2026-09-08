@@ -50,6 +50,16 @@
   .aviso p { color: #ffd98a; margin: 0; }
   .marca { display: inline-block; background: #0b1020; border: 1px solid #2a3358;
            border-radius: 6px; padding: 2px 8px; font-size: 12px; color: #ffd9a0; }
+
+  /* PANTALLAS GRANDES. Una TV 4K de 50" reporta los mismos pixeles CSS que un
+     monitor de escritorio, pero se mira desde tres metros: con los tamanos de
+     escritorio queda ilegible, y la columna de contenido (max-width del .wrap)
+     ocupa un cuarto de la pantalla. `zoom` agranda texto, cajas y padding a la
+     vez, y como recalcula el layout (no es `transform`), la columna sigue
+     centrada y ninguna tabla se desborda.
+     Mismos cortes que en map.html, para que las 5 paginas escalen igual. */
+  @media (min-width: 2400px) { body { zoom: 1.5; } }
+  @media (min-width: 3200px) { body { zoom: 1.9; } }
 </style>
 </head>
 <body>

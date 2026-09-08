@@ -9,13 +9,77 @@
   * { box-sizing: border-box; font-family: Arial, Helvetica, sans-serif; }
   #map { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; }
 
+  /* ------------------------------------------------------------------
+     ZONAS. Todo lo que flota sobre el mapa vive en una de tres franjas:
+     superior, media e inferior. Antes cada panel era `position: fixed` con
+     su propia coordenada calculada a mano (top:170px, bottom:52px...), y
+     esas constantes suponen alturas que cambian: el panel de controles
+     envuelve a más renglones en una ventana angosta, la barra de totales
+     pasa a dos líneas cuando el texto es largo. Cada suposición rota es una
+     superposición. Acá las franjas se apilan y el navegador hace la cuenta,
+     así que no pueden pisarse a ninguna resolución.
+
+     Las dos variables las publica `medirZonas()` con un ResizeObserver: son
+     la altura real de las franjas superior e inferior, medidas y no supuestas.
+     Los paneles laterales las usan para limitar su alto y no invadirlas. */
+  :root { --alto-superior: 120px; --alto-inferior: 60px; --escala: 1; }
+
+  /* PANTALLAS GRANDES. Una TV 4K de 50" reporta 3840px, los mismos píxeles CSS
+     que un monitor, pero se mira desde tres metros en vez de sesenta centímetros:
+     con los tamaños de escritorio queda todo ilegible. `zoom` sobre las franjas
+     agranda texto, botones y padding a la vez, y como es zoom (no `transform`)
+     el layout se recalcula, así que el flex sigue evitando superposiciones.
+     El mapa no se toca: el planisferio tiene que seguir usando toda la pantalla.
+
+     Los cortes están en píxeles CSS, no en pulgadas, porque el navegador no
+     conoce el tamaño físico. Un monitor 4K de escritorio también va a agrandar,
+     que es justamente lo que se quiere cuando hay 3840px de ancho. */
+  @media (min-width: 2400px) { :root { --escala: 1.5; } }
+  @media (min-width: 3200px) { :root { --escala: 1.9; } }
+  #zona-superior, #barra-inferior, #route-panel, #route-detail-panel {
+    zoom: var(--escala);
+  }
+
+  #zona-superior, #barra-inferior {
+    position: fixed; left: 14px; right: 14px; z-index: 10;
+    display: flex; gap: 10px;
+    /* Los huecos entre paneles tienen que dejar pasar el click al mapa. */
+    pointer-events: none;
+  }
+  /* La franja inferior envuelve, el mapa local no lo necesitaba. Esta version tiene
+     DOS accesos mas -- Noticias y Salir, que solo existen detras del login -- asi que
+     la fila de la derecha es mas ancha y por debajo de ~900px de ancho ya no entra al
+     lado de los totales: sin esto se montaba sobre ellos y se salia de la pantalla.
+     Envolviendo, el grupo entero baja de renglon y la franja crece; como su alto se
+     mide y se publica en --alto-inferior, los paneles laterales se achican solos. */
+  #barra-inferior { flex-wrap: wrap; }
+  /* Y el grupo derecho tiene que poder achicarse una vez que bajo de renglon: con
+     `flex: 0 0 auto` su base queda clavada al ancho del contenido, asi que sus
+     hijos no envolvian nunca y los accesos se salian de la pantalla igual. */
+  #barra-inferior-der { max-width: 100%; }
+  #zona-superior > *, #barra-inferior > * { pointer-events: auto; }
+
+  #zona-superior { top: 14px; flex-direction: column; align-items: flex-start; }
+  #barra-inferior { bottom: 14px; align-items: flex-end; }
+  #barra-inferior-izq { display: flex; flex-direction: column; gap: 8px;
+                        flex: 1 1 auto; min-width: 0; align-items: flex-start; }
+  #barra-inferior-der { display: flex; flex-wrap: wrap; gap: 8px;
+                        flex: 0 0 auto; justify-content: flex-end; }
+
   #panel {
-    position: fixed; top: 14px; left: 14px; z-index: 10;
     background: rgba(16,22,46,0.88); backdrop-filter: blur(6px);
     border: 1px solid #2a3358; border-radius: 12px;
     padding: 14px 18px; color: #eee; max-width: 92vw;
     box-shadow: 0 8px 24px rgba(0,0,0,0.4);
   }
+  .acceso, #credit {
+    font-size: 11px; color: #9aa4c7; background: rgba(16,22,46,0.88);
+    backdrop-filter: blur(6px); border: 1px solid #2a3358; border-radius: 8px;
+    padding: 6px 12px; text-decoration: none; white-space: nowrap;
+  }
+  .acceso.destacado { color: #ffd9a0; border-color: #6b551f; }
+  .acceso:hover { border-color: #4c7cf0; color: #fff; }
+
   #panel h1 { margin: 0 0 2px 0; font-size: 17px; }
   #subtitle { color: #9aa4c7; font-size: 11px; margin-bottom: 10px; }
   #panel-header { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
@@ -50,13 +114,15 @@
     border-bottom: 1px solid #2a3358;
   }
 
-  /* El ancho lo termina de fijar layoutBottomBar(): esta barra y los accesos de abajo a
-     la derecha comparten la misma franja, y con el texto largo (periodo + rutas + vuelos
-     + pasajeros + m3) la barra crecia por encima de "Noticias" y lo tapaba. El tope de
-     aca es solo para que no se pase de la pantalla antes de que corra el JS. */
+  /* Esta barra y los accesos de abajo a la derecha comparten franja, y con el texto
+     largo (periodo + rutas + vuelos + pasajeros + m3) la barra crecia por encima de
+     los accesos y los tapaba. Ya no hay JS que le calcule el ancho: es un flex item
+     elastico y el navegador le da lo que sobra. */
   #stats {
-    position: fixed; bottom: 14px; left: 14px; z-index: 10;
-    max-width: calc(100vw - 28px); line-height: 1.45;
+    /* Sin ancho fijo: es el bloque elástico de la franja inferior. `min-width:0`
+       es lo que le permite achicarse en vez de empujar a los accesos fuera de
+       pantalla — sin eso, un flex item nunca baja de su ancho de contenido. */
+    max-width: 100%; min-width: 0; line-height: 1.45;
     background: rgba(16,22,46,0.88); backdrop-filter: blur(6px);
     border: 1px solid #2a3358; border-radius: 10px;
     padding: 8px 14px; color: #9aa4c7; font-size: 12px;
@@ -66,12 +132,12 @@
      confundir una estimación del modelo con un despacho real de ANAC es el único
      error de esta pantalla que se puede llevar puesta una decisión comercial. */
   #proy-warning {
-    /* Debajo de la barra de controles (top:14px, ~40px de alto), no encima: centrado a
-       top:14px quedaba pisando los selectores de Año y Mes justo cuando el usuario los
-       está usando, que es el único momento en que este aviso importa. */
     /* Dentro del encabezado y pegado a la derecha, no flotando debajo: ahi tapaba el
-       mapa y quedaba lejos del titulo que describe. Al ser un hijo mas del header ya no
-       hace falta el `position: fixed` con el top calculado a mano. */
+       mapa y quedaba lejos del titulo que describe. Antes tenía un `top` fijo que el
+       JS recalculaba en cada render: con el panel de 108px y el aviso clavado en 66px
+       se pisaban 56px hasta que corría ese JS, y quedaba desfasado si la ventana
+       cambiaba de tamaño sin volver a renderizar. Siendo un hijo más del header no
+       hay nada que recalcular. */
     margin-left: auto; align-self: center;
     z-index: 20; display: none; max-width: 360px;
     background: rgba(60,44,10,0.94); backdrop-filter: blur(6px);
@@ -86,8 +152,12 @@
        a aeropuertos -- no un problema del dato que se esta mirando, y con el tamano y el
        contraste de antes competia con los totales. Se atenua y se recorta; al pasar el
        mouse se lee entero y sigue llevando a /admin de un click. Esconderlo del todo no:
-       entonces nadie asociaria nunca esas aeroplantas. */
-    position: fixed; bottom: 52px; left: 14px; z-index: 10; max-width: 300px;
+       entonces nadie asociaria nunca esas aeroplantas.
+
+       Apilado arriba de la barra de totales, sin `position: fixed`. El `bottom: 52px`
+       que tenía suponía que los totales medían 38px; cuando el texto pasa a dos
+       renglones miden 53 y se pisaban. */
+    max-width: 300px;
     background: rgba(59,40,10,0.55);
     border: 1px solid rgba(107,85,31,0.5); border-radius: 8px;
     padding: 5px 9px; color: #a8946a; font-size: 10.5px; line-height: 1.35;
@@ -101,11 +171,21 @@
   }
 
   #route-panel {
-    position: fixed; top: 78px; right: 14px; z-index: 10;
+    /* Ocupa la franja media: arranca donde termina la superior y no llega nunca
+       a la inferior. El `max-height: 74vh` de antes no miraba ninguna de las dos,
+       así que en una ventana baja se comía la barra de totales. */
+    position: fixed; right: 14px; z-index: 10;
+    /* Dividido por la escala porque este panel lleva `zoom`: adentro de un
+       elemento con zoom las longitudes se multiplican por la escala al pintar,
+       pero `100vh` y las variables (medidas con getBoundingClientRect) ya vienen
+       en pixeles reales. Sin dividir, a 2560px el panel terminaba 500px por
+       debajo del borde inferior y se comia la barra de totales. */
+    top: calc((var(--alto-superior) + 24px) / var(--escala));
+    max-height: calc((100vh - var(--alto-superior) - var(--alto-inferior) - 64px) / var(--escala));
     background: rgba(16,22,46,0.92); backdrop-filter: blur(6px);
     border: 1px solid #2a3358; border-radius: 12px;
     padding: 12px 14px; color: #eee; width: 260px;
-    max-height: 74vh; display: flex; flex-direction: column;
+    display: flex; flex-direction: column;
     box-shadow: 0 8px 24px rgba(0,0,0,0.4);
   }
   #route-panel-header { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: bold; margin-bottom: 8px; }
@@ -121,11 +201,18 @@
   #route-list::-webkit-scrollbar-thumb { background: #3a4470; border-radius: 3px; }
 
   #route-detail-panel {
-    position: fixed; top: 170px; left: 14px; z-index: 12;
+    /* Misma franja media, del lado izquierdo. Los valores viejos (top:170px y
+       max-height: calc(100vh - 190px)) terminaban en 100vh-20, y la barra de
+       totales arranca en 100vh-49: 29px de superposición garantizados, en
+       cualquier resolución, cada vez que el panel llegaba a su alto máximo. */
+    position: fixed; left: 14px; z-index: 12;
+    /* Mismo ajuste por zoom que #route-panel. */
+    top: calc((var(--alto-superior) + 24px) / var(--escala));
+    max-height: calc((100vh - var(--alto-superior) - var(--alto-inferior) - 64px) / var(--escala));
     background: rgba(16,22,46,0.94); backdrop-filter: blur(6px);
     border: 1px solid #4c7cf0; border-radius: 12px;
     padding: 14px 16px; color: #eee; width: 280px;
-    max-height: calc(100vh - 190px); overflow-y: auto;
+    overflow-y: auto;
     box-shadow: 0 8px 24px rgba(0,0,0,0.5);
   }
   #route-detail-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
@@ -252,6 +339,7 @@
 
 <div id="map"></div>
 
+<div id="zona-superior">
 <div id="panel">
   <div id="panel-header">
     <a href="/" id="logo-link" title="Volver a la portada"><img id="logo" src="data:image/png;base64,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" alt="YPF Aviación"></a>
@@ -324,8 +412,7 @@
   </div>
 </div>
 
-<div id="stats"></div>
-<div id="fuel-diag-warning" onclick="window.open('/admin', '_blank')" title="Click para abrir /admin y agregar el alias"></div>
+</div><!-- /zona-superior -->
 
 <div id="route-detail-panel" style="display:none;">
   <div id="route-detail-header">
@@ -1786,12 +1873,9 @@ function actualizarAvisoProyeccion({ proy, real, vacios }) {
   if (!el) return;
   if (!proy && !vacios) { el.style.display = 'none'; return; }
 
+  // Nada de posicionar a mano: el aviso es el segundo hijo de la franja superior y
+  // se apila solo debajo del panel de controles, mida lo que mida.
   el.style.display = 'block';
-  // El panel de arriba cambia de alto según cuántas filas ocupen los selectores (una
-  // sola en pantalla ancha, dos o tres si la ventana es angosta). Un top fijo lo pisa
-  // en algún ancho: se mide en cada render y el aviso se cuelga justo debajo.
-  const panel = document.getElementById('panel');
-  el.style.top = ((panel ? panel.getBoundingClientRect().bottom : 56) + 10) + 'px';
 
   const sinDatos = vacios > 0
     ? ` ${vacios} mes(es) elegido(s) están fuera del horizonte de proyección y suman cero.`
@@ -2237,108 +2321,65 @@ function selectAllMonths() {
 }
 </script>
 
-<a id="admin-link" href="/admin" style="position: fixed; bottom: 12px; font-size: 11px; color: #9aa4c7; background: rgba(16,22,46,0.88); backdrop-filter: blur(6px); border: 1px solid #2a3358; border-radius: 8px; padding: 6px 12px; text-decoration: none; visibility: hidden;">
-  ⚙ Admin
-</a>
+<!-- Franja inferior. Los totales y el aviso de combustible se apilan a la izquierda;
+     los accesos y el crédito se agrupan a la derecha. Cuando el texto de los totales
+     es largo, flex le achica el espacio en vez de dejar que invada los accesos: por
+     eso #stats lleva `min-width: 0`. Si la ventana es muy angosta, los accesos bajan
+     de renglón (`flex-wrap`) en vez de salirse de la pantalla. -->
+<div id="barra-inferior">
+  <div id="barra-inferior-izq">
+    <div id="fuel-diag-warning" onclick="window.open('/admin', '_blank')" title="Click para abrir /admin y agregar el alias"></div>
+    <div id="stats"></div>
+  </div>
 
-<a id="modelo-link" href="/modelo" style="position: fixed; bottom: 12px; font-size: 11px; color: #ffd9a0; background: rgba(16,22,46,0.88); backdrop-filter: blur(6px); border: 1px solid #6b551f; border-radius: 8px; padding: 6px 12px; text-decoration: none; visibility: hidden;">
-  ◇ Cómo se proyecta
-</a>
-
-<a id="proyecciones-link" href="/proyecciones" style="position: fixed; bottom: 12px; font-size: 11px; color: #ffd9a0; background: rgba(16,22,46,0.88); backdrop-filter: blur(6px); border: 1px solid #6b551f; border-radius: 8px; padding: 6px 12px; text-decoration: none; visibility: hidden;">
-  📈 Proyecciones
-</a>
-
-<a id="aerolineas-link" href="/aerolineas" style="position: fixed; bottom: 12px; font-size: 11px; color: #9aa4c7; background: rgba(16,22,46,0.88); backdrop-filter: blur(6px); border: 1px solid #2a3358; border-radius: 8px; padding: 6px 12px; text-decoration: none; visibility: hidden;">
-  📊 Aerolíneas
-</a>
-
-<a id="noticias-link" href="/noticias" style="position: fixed; bottom: 12px; font-size: 11px; color: #9aa4c7; background: rgba(16,22,46,0.88); backdrop-filter: blur(6px); border: 1px solid #2a3358; border-radius: 8px; padding: 6px 12px; text-decoration: none; visibility: hidden;">
-  Noticias
-</a>
-
-<a id="logout-link" href="/logout" style="position: fixed; bottom: 12px; font-size: 11px; color: #9aa4c7; background: rgba(16,22,46,0.88); backdrop-filter: blur(6px); border: 1px solid #2a3358; border-radius: 8px; padding: 6px 12px; text-decoration: none; visibility: hidden;">
-  ⏻ Salir
-</a>
-
-<div id="credit" style="position: fixed; bottom: 12px; right: 12px; font-size: 11px; color: #9aa4c7; background: rgba(16,22,46,0.88); backdrop-filter: blur(6px); border: 1px solid #2a3358; border-radius: 8px; padding: 6px 12px;">
-  Desarrollado por Francisco Luis Noguera para YPF Aviación
+  <div id="barra-inferior-der">
+    <a id="logout-link" class="acceso" href="/logout">⏻ Salir</a>
+    <a id="admin-link" class="acceso" href="/admin">⚙ Admin</a>
+    <a id="noticias-link" class="acceso" href="/noticias">Noticias</a>
+    <a id="aerolineas-link" class="acceso" href="/aerolineas">📊 Aerolíneas</a>
+    <a id="proyecciones-link" class="acceso destacado" href="/proyecciones">📈 Proyecciones</a>
+    <a id="modelo-link" class="acceso destacado" href="/modelo">◇ Cómo se proyecta</a>
+    <div id="credit">Desarrollado por Francisco Luis Noguera para YPF Aviación</div>
+  </div>
 </div>
 
 <script>
-  // Encadenar de derecha a izquierda: Crédito -> Cómo se proyecta -> Proyecciones ->
-  // Aerolíneas -> Noticias -> Admin -> Salir, cada uno usando el ancho real del anterior
-  // (varía según fuente/zoom) en vez de valores fijos a ojo.
-  function layoutBottomBar() {
-    const credit = document.getElementById('credit');
-    const modeloLink = document.getElementById('modelo-link');
-    const proyeccionesLink = document.getElementById('proyecciones-link');
-    const aerolineasLink = document.getElementById('aerolineas-link');
-    const noticiasLink = document.getElementById('noticias-link');
-    const adminLink = document.getElementById('admin-link');
-    const logoutLink = document.getElementById('logout-link');
-    if (!credit || !modeloLink || !proyeccionesLink || !aerolineasLink || !noticiasLink ||
-        !adminLink || !logoutLink) return;
-
-    const creditWidth = credit.getBoundingClientRect().width;
-    const modeloRight = 12 + creditWidth + 8;
-    modeloLink.style.right = modeloRight + 'px';
-    modeloLink.style.visibility = 'visible';
-
-    const modeloWidth = modeloLink.getBoundingClientRect().width;
-    const proyeccionesRight = modeloRight + modeloWidth + 8;
-    proyeccionesLink.style.right = proyeccionesRight + 'px';
-    proyeccionesLink.style.visibility = 'visible';
-
-    const proyeccionesWidth = proyeccionesLink.getBoundingClientRect().width;
-    const aerolineasRight = proyeccionesRight + proyeccionesWidth + 8;
-    aerolineasLink.style.right = aerolineasRight + 'px';
-    aerolineasLink.style.visibility = 'visible';
-
-    const aerolineasWidth = aerolineasLink.getBoundingClientRect().width;
-    const noticiasRight = aerolineasRight + aerolineasWidth + 8;
-    noticiasLink.style.right = noticiasRight + 'px';
-    noticiasLink.style.visibility = 'visible';
-
-    const noticiasWidth = noticiasLink.getBoundingClientRect().width;
-    const adminRight = noticiasRight + noticiasWidth + 8;
-    adminLink.style.right = adminRight + 'px';
-    adminLink.style.visibility = 'visible';
-
-    const adminWidth = adminLink.getBoundingClientRect().width;
-    const logoutRight = adminRight + adminWidth + 8;
-    logoutLink.style.right = logoutRight + 'px';
-    logoutLink.style.visibility = 'visible';
-
-    // La barra de totales arranca en left:14 y crece hacia la derecha con el largo del
-    // texto. Sin tope terminaba montada sobre los accesos (y les gana: tiene z-index).
-    // Se corta donde empieza el acceso mas a la izquierda y el texto envuelve solo.
-    const stats = document.getElementById('stats');
-    if (stats) {
-      const libre = logoutLink.getBoundingClientRect().left - 14 - 10;
-      if (libre < 260) {
-        // Ventana angosta: al lado de los accesos no entra nada legible, asi que la
-        // barra se apoya arriba de ellos en vez de pisarlos.
-        stats.style.bottom = (12 + logoutLink.getBoundingClientRect().height + 8) + 'px';
-        stats.style.maxWidth = 'calc(100vw - 28px)';
-      } else {
-        stats.style.bottom = '14px';
-        stats.style.maxWidth = libre + 'px';
-      }
-
-      // El aviso de combustible se apoya sobre la barra de totales, que ahora puede
-      // tener mas de una linea o estar mas arriba: la posicion se mide, no se asume.
-      const warn = document.getElementById('fuel-diag-warning');
-      if (warn) {
-        const top = stats.getBoundingClientRect().top;
-        warn.style.bottom = (window.innerHeight - top + 8) + 'px';
-      }
-    }
+  // Las franjas superior e inferior se apilan solas con flex; lo unico que el CSS no
+  // puede saber por su cuenta es cuanto miden, y los paneles laterales lo necesitan
+  // para no invadirlas. Eso es todo lo que hace esto: medir y publicar.
+  //
+  // Es deliberado que aca no se posicione nada. La version anterior encadenaba los
+  // accesos de derecha a izquierda sumando anchos, y ademas escribia bottom y
+  // maxWidth de la barra de totales. Cada una de esas cuentas era correcta el dia
+  // que se escribio y se rompia con el siguiente cambio de contenido -- un texto mas
+  // largo, un acceso mas, otra resolucion. El navegador ya sabe apilar cajas.
+  function medirZonas() {
+    const sup = document.getElementById('zona-superior');
+    const inf = document.getElementById('barra-inferior');
+    if (!sup || !inf) return;
+    // getBoundingClientRect ya devuelve pixeles de pantalla, con el zoom de las
+    // pantallas grandes incluido: es la altura que ocupan de verdad.
+    const raiz = document.documentElement;
+    raiz.style.setProperty('--alto-superior', Math.ceil(sup.getBoundingClientRect().height) + 'px');
+    raiz.style.setProperty('--alto-inferior', Math.ceil(inf.getBoundingClientRect().height) + 'px');
   }
+
   // Nombre viejo: quedan llamadas desde render() y desde el chequeo de combustible.
-  const positionAdminLink = layoutBottomBar;
-  window.addEventListener('load', layoutBottomBar);
-  window.addEventListener('resize', layoutBottomBar);
+  const layoutBottomBar = medirZonas;
+  const positionAdminLink = medirZonas;
+
+  window.addEventListener('load', medirZonas);
+  window.addEventListener('resize', medirZonas);
+  // Las franjas cambian de alto sin que cambie la ventana: la barra de totales pasa a
+  // dos renglones, aparece el aviso de proyeccion, el panel envuelve otro selector.
+  // Con el observer los paneles laterales se reajustan tambien en esos casos.
+  if (window.ResizeObserver) {
+    const obs = new ResizeObserver(medirZonas);
+    ['zona-superior', 'barra-inferior'].forEach(id => {
+      const e = document.getElementById(id);
+      if (e) obs.observe(e);
+    });
+  }
 </script>
 
 </body>
