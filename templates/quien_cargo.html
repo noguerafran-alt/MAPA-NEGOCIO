@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quién le cargó a cada avión</title>
+<style>
+  /* Autocontenida: ni CDN ni tiles. Es lo que ya decidio este proyecto para
+     todas sus visualizaciones, y aca ademas la PC donde corre esto puede no
+     tener salida a internet mas que para el feed de AA2000. */
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; background: #0f1115; color: #e6e6e6;
+         margin: 0; padding: 24px; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  h2 { font-size: 1rem; color: #9aa0a6; text-transform: uppercase;
+       letter-spacing: .05em; margin: 0 0 12px; }
+  .subtitle { color: #9aa0a6; margin-bottom: 18px; font-size: .92rem; max-width: 70ch;
+              line-height: 1.5; }
+  a { color: #60a5fa; }
+  .panel { background: #1a1d24; border-radius: 12px; padding: 18px 20px; margin: 20px 0; }
+  .nota { color: #9aa0a6; font-size: .85rem; line-height: 1.55; margin: 10px 0 0;
+          max-width: 80ch; }
+  .nota b { color: #c9ced6; }
+  .empty { color: #9aa0a6; padding: 24px; text-align: center; }
+
+  /* La banda de estado, arriba de todo. Como la franja del receptor del repo del
+     radar: LA VERSION RUIDOSA ES LA QUE AVISA. Rojo si nunca sondeo o si fallo,
+     ambar si la ultima vuelta ya quedo vieja, azul si esta al dia. */
+  .banda { border-radius: 8px; padding: 10px 15px; font-size: .85rem;
+           margin-bottom: 16px; line-height: 1.55; border-left: 3px solid; }
+  .banda.ok    { background: #10243a; border-color: #38bdf8; color: #bae6fd; }
+  .banda.viejo { background: #2a2113; border-color: #fbbf24; color: #fde68a; }
+  .banda.mal   { background: #2f1416; border-color: #f87171; color: #fecaca; }
+
+  .aviso { background: #2a2113; border-left: 3px solid #fbbf24; border-radius: 6px;
+           padding: 12px 16px; color: #e5c07b; font-size: .87rem;
+           line-height: 1.55; margin-bottom: 18px; max-width: 80ch; }
+  .aviso b { color: #fde68a; }
+
+  /* El numero grande. Es lo que la pagina existe para contestar. */
+  .share { background: #1a1d24; border-radius: 12px; padding: 22px 26px; margin-bottom: 16px; }
+  .share .n { font-size: 3.2rem; font-weight: 700; color: #34d399; line-height: 1.05;
+              font-variant-numeric: tabular-nums; }
+  .share .n.rango { font-size: 2.3rem; }
+  .share.falta .n { color: #fbbf24; font-size: 1.5rem; }
+  .share .label { color: #9aa0a6; font-size: .85rem; text-transform: uppercase;
+                  letter-spacing: .05em; margin-top: 6px; }
+  .share .sub { color: #6b7280; font-size: .85rem; margin-top: 10px; line-height: 1.55;
+                max-width: 72ch; }
+  .share .sub b { color: #9aa0a6; }
+
+  .cards { display: flex; gap: 14px; margin-bottom: 14px; flex-wrap: wrap; }
+  .card { background: #1a1d24; border-radius: 12px; padding: 13px 18px; min-width: 128px; }
+  .card .n { font-size: 1.7rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .card .label { color: #9aa0a6; font-size: .78rem; text-transform: uppercase;
+                 letter-spacing: .04em; }
+  .card .pct { color: #6b7280; font-size: .78rem; }
+  .card.gris { background: #171a20; }
+  .card.gris .n { color: #fbbf24; }
+
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; background: #1a1d24;
+          border-radius: 12px; overflow: hidden; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #262a33;
+           font-size: .87rem; white-space: nowrap; }
+  th { color: #9aa0a6; font-weight: 600; text-transform: uppercase; font-size: .71rem; }
+  tr:last-child td { border-bottom: none; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .cod { color: #fbbf24; font-weight: 600; font-family: ui-monospace, monospace; }
+  .ruta { font-family: ui-monospace, monospace; }
+  .muted { color: #4b5563; }
+
+  /* El proveedor va con color Y con texto. El color solo no alcanza: son varias
+     categorias y una es "no se sabe", que es justo la que no se puede confundir
+     con las otras. */
+  .chip { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: .76rem; }
+  .chip.ypf   { background: #14532d; color: #86efac; }
+  .chip.p1    { background: #3a1b1b; color: #fecaca; }
+  .chip.p2    { background: #2c2540; color: #c4b5fd; }
+  .chip.p3    { background: #10243a; color: #bae6fd; }
+  .chip.nadie { background: #2a2113; color: #e5c07b; }
+
+  /* El motivo, en gris y chico: es el respaldo de la fila, no su titular. Pero
+     va SIEMPRE, porque un YPF del interior y un YPF de la planilla son dos
+     niveles de evidencia distintos. */
+  .motivo { color: #6b7280; font-size: .76rem; font-family: ui-monospace, monospace; }
+
+  .barra { height: 6px; background: #262a33; border-radius: 3px; overflow: hidden;
+           min-width: 90px; }
+  .barra > i { display: block; height: 100%; background: #4b5563; }
+  .barra > i.ypf { background: #34d399; }
+  .barra > i.p1 { background: #f87171; }
+  .barra > i.p2 { background: #a78bfa; }
+  .barra > i.p3 { background: #38bdf8; }
+  .barra > i.nadie { background: #fbbf24; }
+</style>
+</head>
+<body>
+<a href="/" style="color:#9aa4c7;font-size:12px;text-decoration:none;">← Volver al inicio</a>
+<h1>Quién le cargó a cada avión</h1>
+<p class="subtitle">
+  Partidas que publica Aeropuertos Argentina, cruzadas con la planilla de
+  proveedores de YPF. <b>El avión carga donde despega</b>: se clasifica por el
+  origen, así que <span class="ruta">AEP-BRC</span> y
+  <span class="ruta">BRC-AEP</span> son dos rutas distintas, con proveedores que
+  pueden ser opuestos.
+</p>
+
+{% if nivel and nivel >= 2 %}
+{# La carga de la planilla es de nivel 2 y no 1: leer la tabla es una cosa, CAMBIARLA es
+   otra. Esta tabla decide de qué petrolera es cada ruta en todo el mapa, así que una
+   carga equivocada mueve números en pantallas que nadie está mirando. #}
+<div id="carga-planilla" style="border:1px solid #2a3358; border-radius:10px;
+     padding:12px 16px; margin:14px 0; background:rgba(16,22,46,0.6);">
+  <b style="font-size:13px;">Actualizar las rutas abastecidas</b>
+  <p style="font-size:12px; color:#9aa4c7; line-height:1.55; margin:6px 0 10px;">
+    Subí la planilla de YPF (<code>.xlsx</code>) y reemplaza la tabla vigente. Se guarda
+    en el disco del servidor, no junto al código: si se guardara ahí, el próximo deploy
+    la borraría y la pantalla volvería sola a una planilla vieja sin avisar.
+    <br>Si el archivo no tiene ninguna ruta reconocible, <b>la tabla anterior queda como
+    está</b> — quedarse sin tabla por un archivo con el formato equivocado es peor.
+  </p>
+  <input type="file" id="planilla" accept=".xlsx,.xlsm">
+  <button onclick="subirPlanilla()">Subir y reemplazar</button>
+  <div id="planilla-msg" style="font-size:12px; margin-top:8px; line-height:1.5;"></div>
+</div>
+
+<script>
+async function subirPlanilla() {
+  const inp = document.getElementById('planilla');
+  const msg = document.getElementById('planilla-msg');
+  if (!inp.files || !inp.files[0]) { msg.textContent = 'Elegí un archivo primero.'; return; }
+  const fd = new FormData();
+  fd.append('planilla', inp.files[0]);
+  msg.style.color = '#9aa4c7';
+  msg.textContent = 'Leyendo la planilla…';
+  try {
+    const r = await fetch('/api/quien-cargo/planilla', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (d.ok) {
+      msg.style.color = '#8fe3a2';
+      msg.textContent = `Listo: ${d.rutas} rutas cargadas. Recargando el tablero…`;
+      // El tablero se vuelve a pedir en vez de recargar la página: así se ve el efecto
+      // del cambio sin perder el filtro que el usuario tenía puesto.
+      if (typeof refrescar === 'function') refrescar();
+    } else {
+      msg.style.color = '#ff9a9a';
+      msg.textContent = d.error || 'No se pudo cargar.';
+    }
+  } catch (e) {
+    msg.style.color = '#ff9a9a';
+    msg.textContent = 'Falló la subida: ' + e;
+  }
+}
+</script>
+{% endif %}
+
+<p class="subtitle" style="margin-top:-10px">
+  <a href="/">&larr; Volver al tablero</a> &nbsp;·&nbsp;
+  <a href="/planilla">Cargar la planilla de proveedores &rarr;</a>
+</p>
+
+<div id="banda"></div>
+<div id="aviso"></div>
+<div id="share"></div>
+<div id="cards" class="cards"></div>
+
+<div class="panel">
+  <h2>Por proveedor</h2>
+  <div class="table-wrap"><table id="t-prov"></table></div>
+  <p class="nota">
+    Las <b>sin resolver</b> no se reparten entre los proveedores y
+    <b>tampoco se sacan del total</b>: un porcentaje calculado sobre «las que
+    pudimos clasificar» afirma más de lo que se sabe.
+  </p>
+</div>
+
+<div class="panel">
+  <h2>Por ruta</h2>
+  <div class="table-wrap"><table id="t-rutas"></table></div>
+  <p class="nota">
+    Es la unidad que consume el modelo de consumo. La ruta es <b>dirigida</b>, y
+    el proveedor es una propiedad de la ruta y no de la aerolínea: por eso la
+    columna de aerolíneas dice quiénes la volaron, no quién decide el proveedor.
+  </p>
+</div>
+
+<div class="panel">
+  <h2>Rutas que le faltan a la planilla</h2>
+  <div class="table-wrap"><table id="t-faltan"></table></div>
+  <p class="nota">
+    Salen de AEP, EZE o COR y la planilla no las declara, así que
+    <b>no se pueden atribuir</b>. Ordenadas por cuántas partidas cuesta cada una:
+    es la lista para pedirle a YPF, con lo que más conviene completar primero
+    arriba.
+  </p>
+</div>
+
+<div class="panel">
+  <h2>Vuelo por vuelo</h2>
+  <div class="table-wrap"><table id="t-vuelos"></table></div>
+  <p class="nota" id="nota-vuelos"></p>
+</div>
+
+<script>
+// Colores por proveedor. YPF siempre verde; los demas toman clase por orden de
+// aparicion, que es por volumen. No se cablean nombres de competidores: la
+// planilla puede traer uno nuevo y la pagina no tiene por que enterarse.
+const CLASES = ["p1", "p2", "p3"];
+const COLOR = { ypf: "#34d399", p1: "#f87171", p2: "#a78bfa", p3: "#38bdf8" };
+let claseDe = {};
+
+function clase(prov) {
+  if (!prov) return "nadie";
+  if (prov.toUpperCase() === "YPF") return "ypf";
+  return claseDe[prov] || "p1";
+}
+
+// Todo lo que viene de la API se escapa antes de entrar al DOM. Son numeros de
+// vuelo y codigos IATA de una fuente ajena: no hay motivo para confiarles HTML.
+function esc(v) {
+  if (v === null || v === undefined) return "";
+  return String(v).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function fecha(e) {
+  if (!e) return "-";
+  const d = new Date(e * 1000);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)} ` +
+         `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+}
+
+function hace(e, ahora) {
+  if (!e) return "nunca";
+  const s = Math.max(0, ahora - e);
+  if (s < 90) return "hace " + Math.round(s) + " s";
+  if (s < 5400) return "hace " + Math.round(s / 60) + " min";
+  return "hace " + (s / 3600).toFixed(1) + " h";
+}
+
+function tabla(el, cols, filas) {
+  if (!filas.length) {
+    el.innerHTML = `<tr><td class="empty">nada todavía</td></tr>`;
+    return;
+  }
+  const th = cols.map((c) => `<th class="${c.num ? "num" : ""}">${c.t}</th>`).join("");
+  const tr = filas.map((f) =>
+    "<tr>" + cols.map((c) => `<td class="${c.num ? "num" : ""}">${c.v(f)}</td>`).join("") + "</tr>"
+  ).join("");
+  el.innerHTML = `<thead><tr>${th}</tr></thead><tbody>${tr}</tbody>`;
+}
+
+function chip(prov) {
+  return `<span class="chip ${clase(prov)}">${esc(prov) || "sin resolver"}</span>`;
+}
+
+function pintar(d) {
+  const total = d.total || 0;
+  const ahora = d.ahora_epoch;
+
+  // ---- la banda de estado. La version ruidosa es la que avisa.
+  const s = d.sondeo || {};
+  let cl = "ok", txt;
+  if (d.sin_base) {
+    cl = "mal";
+    txt = "<b>Todavía no hay datos grabados.</b> Esperá la primera vuelta del sondeo.";
+  } else if (s.error) {
+    cl = "mal";
+    txt = `<b>El último sondeo falló</b> (${fecha(s.ultimo)} UTC): ${esc(s.error)}. ` +
+          `Lo de abajo es lo que había ${hace(s.ultimo_ok, ahora)}.`;
+  } else if (!s.activo) {
+    cl = "viejo";
+    txt = "<b>Sondeo apagado</b> (<code>--sin-sondeo</code>): esto no se actualiza solo.";
+  } else if (!s.ultimo) {
+    cl = "viejo";
+    txt = "Sondeando por primera vez. Los números son de lo ya acumulado.";
+  } else if (ahora - s.ultimo > 2.5 * (s.intervalo_s || 300)) {
+    cl = "viejo";
+    txt = `<b>El último sondeo fue ${hace(s.ultimo, ahora)}</b>, y tendría que ser ` +
+          `cada ${Math.round((s.intervalo_s || 300) / 60)} min.`;
+  } else {
+    txt = `Al día: último sondeo ${hace(s.ultimo, ahora)}, cada ` +
+          `${Math.round((s.intervalo_s || 300) / 60)} min.`;
+  }
+  txt += ` &nbsp;·&nbsp; Ventana medida: ${fecha(d.desde_epoch)} .. ${fecha(d.hasta_epoch)} UTC.`;
+  const banda = document.getElementById("banda");
+  banda.className = "banda " + cl;
+  banda.innerHTML = txt;
+
+  // ---- falta la planilla
+  const t = d.tabla || {};
+  document.getElementById("aviso").innerHTML = t.existe ? "" : `
+    <div class="aviso">
+      <b>No hay planilla de proveedores.</b> Las partidas que salen de AEP, EZE y
+      COR no se pueden atribuir y quedan sin resolver; las del interior igual son
+      de YPF, porque ahí no hay competencia.
+      ${t.error ? "<br>" + esc(t.error) : ""}
+    </div>`;
+
+  // ---- clases de color, por volumen
+  claseDe = {};
+  let i = 0;
+  for (const p of Object.keys(d.por_proveedor || {})) {
+    if (p.toUpperCase() !== "YPF") claseDe[p] = CLASES[i++ % CLASES.length];
+  }
+
+  // ---- el numero grande: YPF sobre el total de partidas
+  const nYpf = Object.entries(d.por_proveedor || {})
+    .filter(([p]) => p.toUpperCase() === "YPF")
+    .reduce((a, [, n]) => a + n, 0);
+  const sinRes = d.n_sin_resolver || 0;
+  const box = document.getElementById("share");
+  if (!total) {
+    box.className = "share falta";
+    box.innerHTML = `<div class="n">Sin partidas en la ventana</div>
+      <div class="label">no hay nada que atribuir</div>`;
+  } else if (sinRes) {
+    // RANGO y no un numero: las sin resolver pueden ser de YPF o de la
+    // competencia, y publicar el piso como si fuera el share afirmaria mas de
+    // lo que se sabe. Es la misma regla que ya rige en este proyecto.
+    const piso = (nYpf / total) * 100, techo = ((nYpf + sinRes) / total) * 100;
+    box.className = "share";
+    box.innerHTML = `
+      <div class="n rango">entre ${piso.toFixed(1)}% y ${techo.toFixed(1)}%</div>
+      <div class="label">de las partidas las abastece YPF</div>
+      <div class="sub">Es un <b>rango</b> porque ${sinRes} de ${total} partidas
+        salen de AEP, EZE o COR sin que la planilla declare esa ruta: pueden ser
+        de YPF o no. Se cierra completando la planilla, no eligiendo un número.</div>`;
+  } else {
+    box.className = "share";
+    box.innerHTML = `
+      <div class="n">${((nYpf / total) * 100).toFixed(1)}%</div>
+      <div class="label">de las partidas las abastece YPF</div>
+      <div class="sub"><b>${nYpf} de ${total}</b> partidas. Sin huecos: la
+        planilla cubre todas las rutas de AEP, EZE y COR que aparecieron en la
+        ventana.</div>`;
+  }
+
+  // ---- tarjetas
+  const cards = Object.entries(d.por_proveedor || {}).map(([p, n]) => `
+    <div class="card">
+      <div class="n" style="color:${COLOR[clase(p)]}">${n}</div>
+      <div class="label">${esc(p)}</div>
+      <div class="pct">${((n / total) * 100).toFixed(1)}%</div>
+    </div>`).join("");
+  document.getElementById("cards").innerHTML = cards + (sinRes ? `
+    <div class="card gris">
+      <div class="n">${sinRes}</div>
+      <div class="label">Sin resolver</div>
+      <div class="pct">${((sinRes / total) * 100).toFixed(1)}%</div>
+    </div>` : "") + `
+    <div class="card gris">
+      <div class="n" style="color:#9aa0a6">${total}</div>
+      <div class="label">Partidas</div>
+      <div class="pct">+${d.programadas_sin_ocurrir || 0} sin despegar</div>
+    </div>`;
+
+  // ---- por proveedor
+  const provs = Object.entries(d.por_proveedor || {})
+    .map(([p, n]) => ({ p, n }))
+    .concat(sinRes ? [{ p: null, n: sinRes }] : []);
+  tabla(document.getElementById("t-prov"), [
+    { t: "Proveedor", v: (f) => chip(f.p) },
+    { t: "Partidas", num: true, v: (f) => f.n },
+    { t: "%", num: true, v: (f) => ((f.n / total) * 100).toFixed(1) + "%" },
+    { t: "", v: (f) => `<div class="barra"><i class="${clase(f.p)}"` +
+                       ` style="width:${(f.n / total) * 100}%"></i></div>` },
+  ], provs);
+
+  // ---- por ruta
+  tabla(document.getElementById("t-rutas"), [
+    { t: "Ruta", v: (f) => `<span class="ruta cod">${esc(f.ruta)}</span>` },
+    { t: "Destino", v: (f) => esc(f.destino_nombre) || '<span class="muted">-</span>' },
+    { t: "Proveedor", v: (f) => chip(f.proveedor) },
+    { t: "Por qué", v: (f) => `<span class="motivo">${esc(f.motivo)}</span>` },
+    { t: "Partidas", num: true, v: (f) => f.vuelos },
+    { t: "La volaron", v: (f) => esc((f.aerolineas || []).join(" ")) ||
+                                 '<span class="muted">-</span>' },
+  ], d.por_ruta || []);
+
+  // ---- rutas que faltan
+  tabla(document.getElementById("t-faltan"), [
+    { t: "Ruta", v: (f) => `<span class="ruta cod">${esc(f[0])}</span>` },
+    { t: "Partidas sin atribuir", num: true, v: (f) => f[1] },
+  ], Object.entries(d.rutas_sin_declarar || {}));
+
+  // ---- vuelo por vuelo
+  tabla(document.getElementById("t-vuelos"), [
+    { t: "Despegó (UTC)", v: (f) => fecha(f.real_epoch) },
+    { t: "Vuelo", v: (f) => `<span class="cod">${esc(f.numero) || "-"}</span>` },
+    { t: "Ruta", v: (f) => `<span class="ruta">${esc(f.origen)}-${esc(f.destino)}</span>` },
+    { t: "Proveedor", v: (f) => chip(f.proveedor) },
+    { t: "Por qué", v: (f) => `<span class="motivo">${esc(f.motivo)}</span>` },
+    { t: "Matrícula", v: (f) => esc(f.matricula) || '<span class="muted">-</span>' },
+  ], d.vuelos || []);
+
+  const n = d.n_vuelos_total || 0, m = (d.vuelos || []).length;
+  document.getElementById("nota-vuelos").innerHTML =
+    `Se muestran ${m} de ${n} partidas${m < n ? " (las más recientes)" : ""}. ` +
+    `El detalle completo va en <a href="/quien-cargo.csv">quien-cargo.csv</a>, ` +
+    `que abre directo en Excel.`;
+}
+
+async function refrescar() {
+  try {
+    const r = await fetch("/api/quien-cargo", { cache: "no-store" });
+    pintar(await r.json());
+  } catch (e) {
+    // Que se caiga el servidor no puede dejar la pantalla como si todo
+    // estuviera bien: es el mismo criterio que la banda de estado.
+    const b = document.getElementById("banda");
+    b.className = "banda mal";
+    b.innerHTML = `<b>No se pudo hablar con el servidor local.</b> ${esc(e)}. ` +
+      `Si cerraste la ventana negra, volvé a correr QUIEN-CARGO.bat.`;
+  }
+}
+
+refrescar();
+setInterval(refrescar, 60000);
+</script>
+</body>
+</html>

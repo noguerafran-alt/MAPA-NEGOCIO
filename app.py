@@ -57,13 +57,15 @@ import proyeccion_archivo
 # El import va guardado: si msrtic o el poller fallan, la pagina tiene que seguir
 # levantando. Se pierde una capa, no el mapa.
 try:
+    import cargar_excel
     import msrtic
+    import proveedores
+    import quien_cargo
     import sondeo
     sondeo.arrancar()
     MSRTIC_ERROR = None
 except Exception as _e:                                  # pragma: no cover
-    msrtic = None
-    sondeo = None
+    cargar_excel = msrtic = proveedores = quien_cargo = sondeo = None
     MSRTIC_ERROR = '%s: %s' % (type(_e).__name__, _e)
 
 app = Flask(__name__)
@@ -1021,6 +1023,110 @@ def _ultimo_t_real_db():
         return max(ts)
     hist_routes, _ = get_historical_rows()
     return _ultimo_t_real(hist_routes)
+
+
+@app.route('/quien-cargo')
+@requiere_nivel(1)
+def quien_cargo_page():
+    """El tablero de partidas con quien abastecio cada una.
+
+    Nivel 1 como todo lo que toca la tabla de proveedores. Es la misma pantalla que el
+    radar sirve en 127.0.0.1:8600, traida adentro para que no haga falta tener el radar
+    corriendo en una PC para verla.
+    """
+    return render_template('quien_cargo.html', nivel=nivel_actual())
+
+
+@app.route('/api/quien-cargo')
+@requiere_nivel(1)
+@limiter.limit("30 per minute")
+def api_quien_cargo():
+    """El tablero y los porcentajes.
+
+    Son dos cuentas distintas a proposito, y esa distincion es del modulo del radar, no
+    de esta pantalla: en la LISTA entran las partidas programadas (un tablero sin ellas
+    seria peor que el del portal de AA2000), pero en los PORCENTAJES solo las que ya
+    despegaron. Una partida que todavia no salio no es una carga de combustible, y
+    contarla haria que el numero cambie segun la hora del dia en que se mire.
+    """
+    if quien_cargo is None or msrtic is None:
+        return jsonify({'error': 'modulo no disponible: %s' % MSRTIC_ERROR}), 503
+    try:
+        horas = request.args.get('horas', '')
+        horas = None if horas in ('', 'todo') else float(horas)
+    except ValueError:
+        horas = None
+    origen = (request.args.get('origen') or '').strip().upper() or None
+    db = msrtic.base_oficial()
+    tabla = proveedores.cargar_tabla(msrtic.tabla_proveedores())
+    try:
+        return jsonify({
+            'tablero': quien_cargo.tablero(db, horas, origen, tabla),
+            'resumen': quien_cargo.desde_base(db, horas, tabla=tabla),
+            'poller': sondeo.estado() if sondeo is not None else {},
+            'tabla_desde': msrtic.tabla_proveedores(),
+        })
+    except Exception as e:
+        app.logger.warning('quien-cargo fallo: %s: %s', type(e).__name__, e)
+        return jsonify({'error': '%s: %s' % (type(e).__name__, e)}), 500
+
+
+@app.route('/api/quien-cargo/planilla', methods=['POST'])
+@requiere_nivel(2)
+def api_quien_cargo_planilla():
+    """Sube la planilla de rutas abastecidas y reemplaza la tabla vigente.
+
+    NIVEL 2 y no 1: leerla es una cosa, cambiarla es otra. Esta tabla decide de que
+    petrolera es cada ruta en todo el mapa, asi que una carga equivocada mueve numeros
+    en pantallas que no se estan mirando.
+
+    Se escribe en el DISCO (nunca al lado del codigo): el filesystem de Render es
+    efimero y el proximo deploy borraria la planilla recien subida, volviendo sola a la
+    semilla del repo sin que nadie se enterara.
+
+    Lo que se lee y lo que se escribe son los MISMOS modulos que usa la consola del
+    radar (cargar_excel.leer y .escribir_json). Con dos lectores, un dia uno interpreta
+    una columna distinto y la tabla pasa a significar cosas distintas segun quien la
+    cargo.
+    """
+    if cargar_excel is None or msrtic is None:
+        return jsonify({'error': 'modulo no disponible: %s' % MSRTIC_ERROR}), 503
+    f = request.files.get('planilla')
+    if not f or not f.filename:
+        return jsonify({'error': 'No llego ningun archivo'}), 400
+    if not f.filename.lower().endswith(('.xlsx', '.xlsm')):
+        return jsonify({'error': 'Tiene que ser un .xlsx'}), 400
+
+    import tempfile
+    from pathlib import Path
+    tmp = os.path.join(tempfile.gettempdir(), 'planilla_%s.xlsx' % os.getpid())
+    try:
+        f.save(tmp)
+        r = cargar_excel.leer(Path(tmp))
+        if not r.get('rutas'):
+            # No se reemplaza la tabla por una vacia: dejar la anterior es mejor que
+            # quedarse sin ninguna por un archivo con el formato equivocado.
+            return jsonify({'error': 'No se reconocio ninguna ruta en la planilla. '
+                                     'La tabla anterior queda como estaba.',
+                            'resumen': cargar_excel.resumen_json(r)}), 400
+        destino = Path(msrtic.tabla_proveedores_destino())
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        n = cargar_excel.escribir_json(r, destino,
+                                       fuente='planilla subida por %s: %s'
+                                              % (session.get('user_email', '?'),
+                                                 f.filename))
+        # El cache de msrtic tiene la tabla vieja adentro de sus filas ya calculadas.
+        msrtic._cache['clave'] = None
+        return jsonify({'ok': True, 'rutas': n, 'destino': str(destino),
+                        'resumen': cargar_excel.resumen_json(r)})
+    except Exception as e:
+        app.logger.warning('planilla fallo: %s: %s', type(e).__name__, e)
+        return jsonify({'error': '%s: %s' % (type(e).__name__, e)}), 400
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
 
 
 @app.route('/api/msrtic')

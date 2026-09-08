@@ -194,3 +194,33 @@ Medido contra el feed en vivo: de 492 partidas, 205 publican matrícula (42%) y 
 terminan con un tipo que el mapa sabe consumir (38%). Las otras se estiman con
 `seleccionar_avion`, y cada fila dice cuántos de sus aviones fueron medidos y cuántos
 estimados: un total de m³ que no distingue una cosa de la otra no se puede auditar.
+
+### La pantalla "Quién le cargó" y la planilla
+
+`/quien-cargo` (nivel 1, y con acceso desde el landing) es el tablero de partidas con la
+petrolera que abasteció cada una — la misma pantalla que el radar sirve en
+`127.0.0.1:8600`, traída adentro para no depender de que el radar corra en una PC.
+
+Dos cuentas distintas, y la distinción es del módulo del radar, no de la pantalla: en la
+**lista** entran las partidas programadas (un tablero sin ellas sería peor que el del
+portal de AA2000), pero en los **porcentajes** sólo las que ya despegaron. Una partida que
+todavía no salió no es una carga de combustible, y contarla haría que el número cambie
+según la hora del día en que se mire.
+
+**Actualizar la planilla es nivel 2, no 1.** Leer la tabla es una cosa; cambiarla es otra:
+decide de qué petrolera es cada ruta en todo el mapa, así que una carga equivocada mueve
+números en pantallas que nadie está mirando.
+
+La planilla subida se escribe en `/var/data/proveedores.json`, **nunca junto al código**:
+el filesystem de Render es efímero y el próximo deploy la borraría, volviendo sola a la
+semilla del repo sin avisar. `msrtic.tabla_proveedores()` prefiere la del disco y cae a
+`datos/proveedores.json` (la semilla) sólo si no hay ninguna subida.
+
+Y si el archivo no tiene ninguna ruta reconocible, **la tabla anterior queda como está**:
+quedarse sin tabla por un archivo con el formato equivocado es peor que no actualizar.
+Verificado con la planilla real (149 rutas) y con un archivo inválido, que da 400 y no
+vacía nada.
+
+Lo que lee y escribe la pantalla son los mismos `cargar_excel.leer` y `.escribir_json` que
+usa la consola del radar. Con dos lectores, un día uno interpreta una columna distinto y
+la tabla pasa a significar cosas distintas según quién la cargó.

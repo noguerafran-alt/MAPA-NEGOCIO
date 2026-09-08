@@ -112,12 +112,34 @@ def base_aviones():
     return os.environ.get('MS_RTIC_AVIONES') or os.path.join(DISCO, 'aircraft_db.sqlite')
 
 
+PROVEEDORES_SEMILLA = os.path.join(BASE, 'datos', 'proveedores.json')
+
+
 def tabla_proveedores():
-    # Este SI va en el repo, y es el unico dato no publico de todo el modulo: dice que
-    # rutas abastece cada petrolera. Por eso /api/msrtic exige nivel 1 -- los usuarios
-    # los crea el admin, asi que detras del login solo hay gente de YPF.
+    """La tabla vigente: la del DISCO si alguien subio una planilla, si no la semilla.
+
+    Los dos lugares hacen falta y no son redundantes:
+
+      disco  lo que se sube desde /quien-cargo. Tiene que estar ahi y no en el repo
+             porque el filesystem de Render es efimero: escrito al lado del codigo,
+             el proximo deploy lo borraria y la pantalla volveria sola a una planilla
+             vieja sin avisar.
+      repo   la semilla, para que un deploy nuevo arranque con datos en vez de una
+             tabla vacia.
+
+    Es el unico dato no publico de todo el modulo -- dice que rutas abastece cada
+    petrolera -- y por eso /api/msrtic y /quien-cargo exigen nivel 1.
+    """
+    if os.environ.get('MS_RTIC_PROVEEDORES'):
+        return os.environ['MS_RTIC_PROVEEDORES']
+    del_disco = os.path.join(DISCO, 'proveedores.json')
+    return del_disco if os.path.exists(del_disco) else PROVEEDORES_SEMILLA
+
+
+def tabla_proveedores_destino():
+    """Donde se ESCRIBE una planilla nueva. Siempre el disco, nunca el repo."""
     return os.environ.get('MS_RTIC_PROVEEDORES') or os.path.join(
-        BASE, 'datos', 'proveedores.json')
+        DISCO, 'proveedores.json')
 
 
 _cache = {'clave': None, 'filas': None, 'estado': None}
