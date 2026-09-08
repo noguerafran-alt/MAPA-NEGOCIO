@@ -1025,6 +1025,38 @@ def _ultimo_t_real_db():
     return _ultimo_t_real(hist_routes)
 
 
+def _quien_cargo_plano(tablero, resumen, sondeo, tabla_desde):
+    """Las dos cuentas del radar en UN objeto, que es lo que la pantalla espera.
+
+    quien_cargo.py expone dos funciones y el radar las sirve en dos endpoints
+    distintos, pero la pantalla usa las dos a la vez: la LISTA sale de tablero()
+    -- que incluye las programadas -- y los PORCENTAJES de desde_base(), que solo
+    cuenta las que ya despegaron. Devolverlas anidadas como {tablero, resumen} deja
+    la pantalla leyendo `d.vuelos` sobre un objeto que no lo tiene, y el resultado
+    no es un error visible: es un tablero que dice CERO PARTIDAS con la base llena.
+
+    El orden importa. `resumen` va primero y `tablero` lo pisa, porque las dos traen
+    `vuelos` y `total` y la lista tiene que ser la del tablero, con las programadas
+    adentro. `n_vuelos_total` sale del tablero por lo mismo: es el "de cuántas" del
+    pie de la lista.
+    """
+    import time
+    if tablero is None:
+        # Sin base todavia. Es un estado NORMAL antes de la primera vuelta del
+        # poller, asi que la pantalla lo dice en vez de romperse.
+        d = {'sin_base': True, 'vuelos': [], 'total': 0, 'ocurridas': 0,
+             'origenes': [], 'tabla': {'existe': False}, 'n_rutas_en_tabla': 0}
+    else:
+        d = dict(resumen or {})
+        d.update(tablero)
+        d['sin_base'] = False
+    d['n_vuelos_total'] = d.get('total', 0)
+    d['sondeo'] = sondeo
+    d['ahora_epoch'] = time.time()
+    d['tabla_desde'] = tabla_desde
+    return d
+
+
 @app.route('/quien-cargo')
 @requiere_nivel(1)
 def quien_cargo_page():
@@ -1060,12 +1092,11 @@ def api_quien_cargo():
     db = msrtic.base_oficial()
     tabla = proveedores.cargar_tabla(msrtic.tabla_proveedores())
     try:
-        return jsonify({
-            'tablero': quien_cargo.tablero(db, horas, origen, tabla),
-            'resumen': quien_cargo.desde_base(db, horas, tabla=tabla),
-            'poller': sondeo.estado() if sondeo is not None else {},
-            'tabla_desde': msrtic.tabla_proveedores(),
-        })
+        tablero = quien_cargo.tablero(db, horas, origen, tabla)
+        resumen = quien_cargo.desde_base(db, horas, tabla=tabla)
+        est = sondeo.estado() if sondeo is not None else {'activo': False}
+        return jsonify(_quien_cargo_plano(tablero, resumen, est,
+                                          msrtic.tabla_proveedores()))
     except Exception as e:
         app.logger.warning('quien-cargo fallo: %s: %s', type(e).__name__, e)
         return jsonify({'error': '%s: %s' % (type(e).__name__, e)}), 500

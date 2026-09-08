@@ -273,7 +273,12 @@ function pintar(d) {
           `Lo de abajo es lo que había ${hace(s.ultimo_ok, ahora)}.`;
   } else if (!s.activo) {
     cl = "viejo";
-    txt = "<b>Sondeo apagado</b> (<code>--sin-sondeo</code>): esto no se actualiza solo.";
+    // `nota` la pone quien sirve la pantalla cuando "apagado" no es la razon: el mapa
+    // local nunca sondea -- la base la graba el radar -- y mandarlo a buscar un flag
+    // `--sin-sondeo` que ahi no existe es peor que no decir nada.
+    txt = s.nota
+      ? `<b>${esc(s.nota)}</b>`
+      : "<b>Sondeo apagado</b> (<code>--sin-sondeo</code>): esto no se actualiza solo.";
   } else if (!s.ultimo) {
     cl = "viejo";
     txt = "Sondeando por primera vez. Los números son de lo ya acumulado.";
