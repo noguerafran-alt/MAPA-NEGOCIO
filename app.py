@@ -1036,22 +1036,46 @@ def _quien_cargo_plano(tablero, resumen, sondeo, tabla_desde):
     la pantalla leyendo `d.vuelos` sobre un objeto que no lo tiene, y el resultado
     no es un error visible: es un tablero que dice CERO PARTIDAS con la base llena.
 
-    El orden importa. `resumen` va primero y `tablero` lo pisa, porque las dos traen
-    `vuelos` y `total` y la lista tiene que ser la del tablero, con las programadas
-    adentro. `n_vuelos_total` sale del tablero por lo mismo: es el "de cuántas" del
-    pie de la lista.
+    El orden importa, PERO NO PARA `total`. `resumen` va primero y `tablero` lo pisa
+    porque las dos traen `vuelos` y la lista tiene que ser la del tablero, con las
+    programadas adentro. `total` es la EXCEPCION: es el denominador de los porcentajes
+    y tiene que seguir siendo el de las partidas medidas.
+
+    Pisarlo fue un bug real y de los que no se ven. Con el total del tablero (677, que
+    incluye las programadas) sobre los conteos del resumen (173 despegadas), la pantalla
+    mostraba 17,1% de YPF donde el numero es 67,1%. Los porcentajes sumaban 32% en vez
+    de 100% y nadie lo dice: se lee como un resultado malo del negocio, no como una
+    cuenta mal hecha. El "de cuantas" del pie de la lista es otro numero y va aparte,
+    en `n_vuelos_total`.
     """
     import time
     if tablero is None:
         # Sin base todavia. Es un estado NORMAL antes de la primera vuelta del
         # poller, asi que la pantalla lo dice en vez de romperse.
         d = {'sin_base': True, 'vuelos': [], 'total': 0, 'ocurridas': 0,
+             'n_vuelos_total': 0,
              'origenes': [], 'tabla': {'existe': False}, 'n_rutas_en_tabla': 0}
     else:
         d = dict(resumen or {})
-        d.update(tablero)
+        lista = dict(tablero)
+        # El total del tablero es el de la LISTA, no el de los porcentajes: se saca
+        # ANTES de pisar, asi `total` sigue siendo el de las partidas medidas.
+        d['n_vuelos_total'] = lista.pop('total', 0)
+        d.update(lista)
         d['sin_base'] = False
-    d['n_vuelos_total'] = d.get('total', 0)
+        # GUARDA DEL DENOMINADOR, y esta vez puede fallar. La de resumen() no podia:
+        # ahi cada fila va a un proveedor o a sin_resolver, asi que la suma da `total`
+        # SIEMPRE y el chequeo era una tautologia. La mezcla pasa ACA, al juntar dos
+        # cuentas de distinto alcance, y se comprueba de un solo lado: el denominador
+        # medido no puede ser MAYOR que las partidas que el tablero vio despegar. Menor
+        # si puede -- el piso de medicion y el filtro de horas descartan tramos -- y por
+        # eso no es `!=`, que ahi si daria una falsa alarma y esconderia los numeros.
+        ocurridas = lista.get('ocurridas')
+        if ocurridas is not None and d.get('total', 0) > ocurridas:
+            d['denominador_inconsistente'] = (
+                'el denominador dice %d partidas y solo %d tienen hora de despegue '
+                'medida: se mezclo el total de la lista con la cuenta de los '
+                'porcentajes' % (d.get('total', 0), ocurridas))
     # TRADUCCION DEL ESTADO DEL POLLER, y no es cosmetica. La pantalla viene del radar y
     # espera `activo`; el poller de aca expone `corriendo`. Sin traducirlo, `s.activo`
     # queda undefined, la pantalla cae en el branch de "apagado" y muestra
@@ -1106,7 +1130,10 @@ def api_quien_cargo():
     tabla = proveedores.cargar_tabla(msrtic.tabla_proveedores())
     try:
         tablero = quien_cargo.tablero(db, horas, origen, tabla)
-        resumen = quien_cargo.desde_base(db, horas, tabla=tabla)
+        # `origen` VA A LAS DOS. Pasarselo solo al tablero filtra la lista y deja
+        # los porcentajes nacionales al lado: el mismo error de comparar una parte
+        # contra el todo que se saco de la linea del PA en /proyecciones.
+        resumen = quien_cargo.desde_base(db, horas, origen=origen, tabla=tabla)
         est = sondeo.estado() if sondeo is not None else {'activo': False}
         return jsonify(_quien_cargo_plano(tablero, resumen, est,
                                           msrtic.tabla_proveedores()))

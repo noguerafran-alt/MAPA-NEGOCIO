@@ -150,10 +150,17 @@ def resumen(filas: list[dict]) -> dict:
         # set no es serializable a JSON, y la pagina consume esto por la API.
         d["aerolineas"] = sorted(d["aerolineas"])
 
-    # GUARDA DEL DENOMINADOR. Cada fila va a por_prov o a sin_resolver, asi que la suma
-    # tiene que dar `total` exacto. Si no da, el denominador se mezclo con partidas que no
-    # estan clasificadas -- por ejemplo las programadas -- y los porcentajes salen
-    # divididos por un numero mas grande del que corresponde.
+    # GUARDA DEL DENOMINADOR -- Y ACA NO ALCANZA, leer antes de confiar en ella.
+    #
+    # Cada fila va a por_prov o a sin_resolver, asi que la suma da `total` SIEMPRE:
+    # este chequeo es una tautologia y no puede fallar nunca. Sirve como red contra un
+    # cambio futuro en el reparto de filas, nada mas.
+    #
+    # LO QUE NO PUEDE VER es el caso real, porque no pasa aca: pasa cuando alguien
+    # junta este resumen con el del tablero en un solo objeto y el `total` del tablero
+    # -- que incluye las programadas -- pisa este. Desde adentro de resumen() eso es
+    # invisible. El chequeo que si lo agarra esta en `_quien_cargo_plano()` de los dos
+    # mapas, comparando el denominador contra las partidas con hora de despegue medida.
     #
     # No es una hipotesis: paso. Una version vieja de esta pantalla mostraba "209 de 714
     # partidas, 29,3% de YPF" con los porcentajes sumando 37,7% en vez de 100%, porque el

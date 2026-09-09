@@ -104,6 +104,41 @@ print(f"      asigna: {info['avion']} ({info['asientos']} asientos) · "
 check('Ya no asigna un narrowbody de 170 asientos', (info['asientos'] or 0) <= 110,
       f"asigna {info['avion']} de {info['asientos']} asientos")
 
+
+print('\n' + '--- Quien le cargo: el denominador de los porcentajes')
+# CON DATOS SINTETICOS a proposito: la base de partidas vive en el disco de Render y este
+# repo no la tiene en local. Lo que se verifica no son los datos sino el ENSAMBLADO, que
+# es donde estuvo el error: la pantalla junta la LISTA de tablero() -- que incluye las
+# programadas -- con los PORCENTAJES de desde_base(), que solo cuenta las despegadas. Con
+# el total de la lista pisando al de los porcentajes, el share de YPF se dividia por un
+# numero mucho mas grande: 17,1% donde el numero es 67,1%, sumando 32% en vez de 100%.
+import app as _appmod  # noqa
+
+_tab = {'vuelos': [{'x': 1}] * 677, 'total': 677, 'ocurridas': 173,
+        'origenes': ['AEP'], 'tabla': {'existe': True}, 'n_rutas_en_tabla': 9}
+_res = {'vuelos': [{'x': 1}] * 173, 'total': 173,
+        'por_proveedor': {'YPF': 116, 'RAIZEN': 37, 'AXION': 16},
+        'n_sin_resolver': 4, 'por_motivo': {}, 'por_ruta': [], 'n_rutas': 0,
+        'rutas_sin_declarar': {}, 'programadas_sin_ocurrir': 131,
+        'denominador_inconsistente': None}
+
+_d = _appmod._quien_cargo_plano(_tab, _res, {'activo': True}, None)
+_partes = sum(_d['por_proveedor'].values()) + _d['n_sin_resolver']
+check('El denominador es el de las partidas medidas, no el de la lista',
+      _d['total'] == 173, "total=%s (la lista tiene 677)" % _d['total'])
+check('Los porcentajes cierran en 100%', _partes == _d['total'],
+      "las partes suman %s y el denominador es %s" % (_partes, _d['total']))
+check('El pie de la lista sigue contando las programadas',
+      _d['n_vuelos_total'] == 677, "n_vuelos_total=%s" % _d['n_vuelos_total'])
+check('Sin mezcla, no hay aviso de denominador',
+      not _d.get('denominador_inconsistente'))
+
+# Y si alguien vuelve a mezclar, la pantalla tiene que decirlo. Una guarda que no puede
+# fallar es peor que ninguna: da la sensacion de estar cubierto.
+_mal = _appmod._quien_cargo_plano(_tab, dict(_res, total=677), {'activo': True}, None)
+check('Si alguien vuelve a mezclar las cuentas, la pantalla avisa',
+      bool(_mal.get('denominador_inconsistente')),
+      'no aviso nada con el denominador en 677')
 print()
 if fallos:
     print(f'RESULTADO: {len(fallos)} verificacion(es) fallaron')
