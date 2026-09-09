@@ -224,3 +224,26 @@ vacía nada.
 Lo que lee y escribe la pantalla son los mismos `cargar_excel.leer` y `.escribir_json` que
 usa la consola del radar. Con dos lectores, un día uno interpreta una columna distinto y
 la tabla pasa a significar cosas distintas según quién la cargó.
+
+### El puente hacia la terminal: el Excel del SharePoint
+
+Esta instancia sondea AA2000 cada 5 minutos, 24/7, y tiene el acumulado bueno. La PC donde
+corre el mapa local no puede: arranca sin internet y ahí el feed suele estar bloqueado por
+la red (medido: 403 URLBlocked). Así que el dato viaja en un archivo.
+
+`GET /api/msrtic/export.xlsx` (nivel 1) baja el acumulado como Excel, y hay un botón en
+`/quien-cargo`. Se pega en la biblioteca de SharePoint y el mapa lo lee de la carpeta
+sincronizada con su `importar_ms.py`.
+
+**Lleva las partidas crudas, no los m³.** Si trajera el consumo calculado habría dos
+implementaciones del mismo número —la de acá y `avion_model` del mapa— y un día
+diferirían sin que nadie sepa cuál creer. Con las crudas hay un solo cálculo, y si mañana
+se recalibra la flota el histórico se recalcula solo.
+
+El formato lo define `intercambio_ms.py`, que **está en los dos repos con el mismo
+contenido**: con un escritor y un lector separados, un día uno agrega una columna y el
+archivo pasa a significar cosas distintas según quién lo abrió.
+
+La hoja `meta` del Excel lleva `generado`, `hasta` y el conteo de filas. No es decoración:
+es lo único que le permite a la terminal decir "datos al 8 de septiembre" en vez de
+mostrarlos como de hoy.

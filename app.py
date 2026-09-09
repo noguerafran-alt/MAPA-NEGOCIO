@@ -58,6 +58,7 @@ import proyeccion_archivo
 # levantando. Se pierde una capa, no el mapa.
 try:
     import cargar_excel
+    import intercambio_ms
     import msrtic
     import proveedores
     import quien_cargo
@@ -65,7 +66,7 @@ try:
     sondeo.arrancar()
     MSRTIC_ERROR = None
 except Exception as _e:                                  # pragma: no cover
-    cargar_excel = msrtic = proveedores = quien_cargo = sondeo = None
+    cargar_excel = intercambio_ms = msrtic = proveedores = quien_cargo = sondeo = None
     MSRTIC_ERROR = '%s: %s' % (type(_e).__name__, _e)
 
 app = Flask(__name__)
@@ -1099,6 +1100,66 @@ def api_quien_cargo():
                                           msrtic.tabla_proveedores()))
     except Exception as e:
         app.logger.warning('quien-cargo fallo: %s: %s', type(e).__name__, e)
+        return jsonify({'error': '%s: %s' % (type(e).__name__, e)}), 500
+
+
+@app.route('/api/msrtic/export.xlsx')
+@requiere_nivel(1)
+def api_msrtic_export():
+    """Baja el acumulado de partidas como Excel, para pegarlo en el SharePoint.
+
+    Es el puente hacia la terminal: esta instancia sondea AA2000 24/7 y tiene el
+    acumulado bueno; el mapa que corre en la PC del kiosco no puede sondear (su regla es
+    arrancar sin internet, y ahi el feed puede estar bloqueado por la red). Se baja este
+    archivo, se pega en la biblioteca de SharePoint, y la terminal lo lee de la carpeta
+    sincronizada.
+
+    NIVEL 1 como el resto de MS RTIC. El archivo NO lleva proveedores ni precios: son las
+    partidas que AA2000 publica y el consumo lo calcula despues el mapa con su propio
+    modelo. Aun asi va detras del login, porque es el acumulado de un sondeo propio.
+    """
+    if msrtic is None or intercambio_ms is None:
+        return jsonify({'error': 'modulo no disponible: %s' % MSRTIC_ERROR}), 503
+    import sqlite3
+    import time as _t
+    base = msrtic.base_oficial()
+    if not os.path.exists(base):
+        return jsonify({'error': 'todavia no hay partidas: el poller no completo su '
+                                 'primer sondeo'}), 409
+    try:
+        con = sqlite3.connect('file:%s?mode=ro' % base.replace(os.sep, '/'), uri=True)
+        con.row_factory = sqlite3.Row
+        try:
+            filas = [dict(r) for r in con.execute('select * from vuelo_oficial')]
+        finally:
+            con.close()
+        if not filas:
+            return jsonify({'error': 'la base de partidas esta vacia'}), 409
+
+        # `hasta` es el ultimo momento con dato, no la hora de la descarga: es lo que la
+        # terminal muestra para no presentar como de hoy algo de hace una semana.
+        ultimo = max([f.get('ultima_vez') or 0 for f in filas] or [0])
+        meta = {
+            'formato': intercambio_ms.FORMATO,
+            'generado': _t.strftime('%Y-%m-%dT%H:%M:%S'),
+            'hasta': _t.strftime('%Y-%m-%dT%H:%M:%S', _t.localtime(ultimo)) if ultimo else '',
+            'hasta_epoch': ultimo,
+            'filas': len(filas),
+            'partidas': sum(1 for f in filas if (f.get('movimiento') or '') == 'D'),
+            'con_hora_real': sum(1 for f in filas if f.get('real_epoch')),
+            'origen': 'mapa-negocio web, poller de AA2000',
+        }
+        datos = intercambio_ms.escribir(filas, meta)
+        resp = make_response(datos)
+        resp.headers['Content-Type'] = ('application/vnd.openxmlformats-officedocument'
+                                        '.spreadsheetml.sheet')
+        # El nombre lleva la fecha para que en el SharePoint no se pisen dos descargas del
+        # mismo dia sin que nadie lo note; el mapa busca por prefijo, no por nombre exacto.
+        resp.headers['Content-Disposition'] = (
+            'attachment; filename=ms_partidas_%s.xlsx' % _t.strftime('%Y%m%d_%H%M'))
+        return resp
+    except Exception as e:
+        app.logger.warning('export MS RTIC fallo: %s: %s', type(e).__name__, e)
         return jsonify({'error': '%s: %s' % (type(e).__name__, e)}), 500
 
 
