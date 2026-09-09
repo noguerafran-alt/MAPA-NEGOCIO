@@ -1103,8 +1103,33 @@ def api_quien_cargo():
         return jsonify({'error': '%s: %s' % (type(e).__name__, e)}), 500
 
 
+def _token_export_ok():
+    """Si el pedido trae el token de descarga configurado.
+
+    POR QUE EXISTE. La terminal necesita bajar este Excel SIN navegador: en esa PC la
+    pagina esta bloqueada por el antivirus del browser, y un script no puede hacer el
+    OAuth de Google. El token es la unica forma de que un `python bajar_ms.py` funcione.
+
+    APAGADO POR DEFECTO, y eso es deliberado: si MS_EXPORT_TOKEN no esta configurada, esta
+    funcion devuelve False siempre y el endpoint queda exactamente como estaba -- solo
+    sesion. Agregar un camino de autenticacion que se activa solo seria un agujero
+    esperando; asi hay que encenderlo a mano en Render.
+
+    Se compara con compare_digest y no con ==: la comparacion normal corta en el primer
+    byte distinto, y con suficientes intentos eso filtra el token de a un caracter.
+    """
+    import hmac
+    esperado = os.environ.get('MS_EXPORT_TOKEN') or ''
+    if len(esperado) < 20:
+        # Un token corto es peor que ninguno: da la sensacion de estar protegido y se
+        # adivina. Si no llega a 20 caracteres se ignora y solo vale la sesion.
+        return False
+    dado = (request.args.get('token') or
+            request.headers.get('X-Export-Token') or '')
+    return bool(dado) and hmac.compare_digest(dado, esperado)
+
+
 @app.route('/api/msrtic/export.xlsx')
-@requiere_nivel(1)
 def api_msrtic_export():
     """Baja el acumulado de partidas como Excel, para pegarlo en el SharePoint.
 
@@ -1114,10 +1139,17 @@ def api_msrtic_export():
     archivo, se pega en la biblioteca de SharePoint, y la terminal lo lee de la carpeta
     sincronizada.
 
-    NIVEL 1 como el resto de MS RTIC. El archivo NO lleva proveedores ni precios: son las
-    partidas que AA2000 publica y el consumo lo calcula despues el mapa con su propio
-    modelo. Aun asi va detras del login, porque es el acumulado de un sondeo propio.
+    NIVEL 1 como el resto de MS RTIC, o el token de descarga (ver _token_export_ok): la
+    terminal no puede hacer el OAuth de Google desde un script. El archivo NO lleva
+    proveedores ni precios -- son las partidas que AA2000 publica y el consumo lo calcula
+    despues el mapa con su propio modelo -- pero es el acumulado de un sondeo propio, asi
+    que no queda abierto.
     """
+    if not _token_export_ok() and nivel_actual() < 1:
+        # 401 y no redirect al login: quien pega aca es un script, y una redireccion a una
+        # pagina HTML le llega como un archivo corrupto en vez de un error.
+        return jsonify({'error': 'No autorizado. Con sesion de nivel 1, o con '
+                                 '?token= si MS_EXPORT_TOKEN esta configurada.'}), 401
     if msrtic is None or intercambio_ms is None:
         return jsonify({'error': 'modulo no disponible: %s' % MSRTIC_ERROR}), 503
     import sqlite3
@@ -1257,10 +1289,13 @@ def api_msrtic():
     # El dia manda sobre la ventana de horas: son dos cortes distintos del mismo dato y
     # combinarlos daria un subconjunto que nadie pidio.
     dia = (request.args.get('dia') or '').strip() or None
+    desde = (request.args.get('desde') or '').strip() or None
+    hasta = (request.args.get('hasta') or '').strip() or None
     try:
-        filas, est = msrtic.filas(horas, dia=dia)
+        filas, est = msrtic.filas(horas, dia=dia, desde=desde, hasta=hasta)
         return jsonify({'disponible': True, 'filas': filas,
-                        'resumen': msrtic.resumen(horas, dia=dia), 'estado': est,
+                        'resumen': msrtic.resumen(horas, dia=dia, desde=desde,
+                                                  hasta=hasta), 'estado': est,
                         # Los dias que EXISTEN, con su conteo: el selector se puebla con
                         # esto y no con un calendario donde casi todo esta vacio, y el
                         # conteo deja ver que el dia en curso esta a medio sondear.

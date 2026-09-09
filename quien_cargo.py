@@ -150,8 +150,27 @@ def resumen(filas: list[dict]) -> dict:
         # set no es serializable a JSON, y la pagina consume esto por la API.
         d["aerolineas"] = sorted(d["aerolineas"])
 
+    # GUARDA DEL DENOMINADOR. Cada fila va a por_prov o a sin_resolver, asi que la suma
+    # tiene que dar `total` exacto. Si no da, el denominador se mezclo con partidas que no
+    # estan clasificadas -- por ejemplo las programadas -- y los porcentajes salen
+    # divididos por un numero mas grande del que corresponde.
+    #
+    # No es una hipotesis: paso. Una version vieja de esta pantalla mostraba "209 de 714
+    # partidas, 29,3% de YPF" con los porcentajes sumando 37,7% en vez de 100%, porque el
+    # numerador eran las despegadas y el denominador incluia las 445 programadas. Un
+    # porcentaje que no suma 100 y nadie lo dice es de las cosas que se leen como un
+    # resultado y no como un error: el share de YPF quedaba a menos de la mitad.
+    suma = sum(por_prov.values()) + len(sin_resolver)
+    inconsistente = None
+    if suma != len(filas):
+        inconsistente = ("los proveedores suman %d y el total es %d: el denominador "
+                         "incluye partidas sin clasificar" % (suma, len(filas)))
+
     return {
         "total": len(filas),
+        # None cuando esta bien. La pagina lo muestra como aviso en vez de dibujar
+        # porcentajes que no cierran.
+        "denominador_inconsistente": inconsistente,
         "por_proveedor": dict(sorted(por_prov.items(), key=lambda kv: -kv[1])),
         "por_motivo": dict(sorted(por_motivo.items(), key=lambda kv: -kv[1])),
         "n_sin_resolver": len(sin_resolver),

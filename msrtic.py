@@ -274,7 +274,7 @@ def _partidas(horas):
         con.close()
 
 
-def calcular(horas=24.0, coords=None, dia=None):
+def calcular(horas=24.0, coords=None, dia=None, desde=None, hasta=None):
     """(filas, estado). Una fila por ruta-aerolinea, con vuelos, pax y m3.
 
     `horas` mira hacia atras desde ahora sobre la hora PROGRAMADA de salida. 24 es
@@ -305,8 +305,18 @@ def calcular(horas=24.0, coords=None, dia=None):
 
     # Con un dia pedido se ignora la ventana de horas: son dos formas distintas de
     # cortar lo mismo y combinarlas daria un subconjunto que nadie pidio.
-    crudas = _partidas(None if dia else horas)
-    if dia:
+    # Tres formas de cortar el mismo dato, y se aplica UNA. El rango manda sobre el dia y
+    # el dia sobre la ventana de horas: combinarlas daria un subconjunto que nadie pidio.
+    rango = bool(desde or hasta)
+    crudas = _partidas(None if (dia or rango) else horas)
+    if rango:
+        # Inclusivo en las dos puntas: "del 3 al 8" incluye el 3 y el 8, que es lo que
+        # significa en castellano.
+        d0, d1 = (desde or '0000-00-00'), (hasta or '9999-99-99')
+        if d0 > d1:
+            d0, d1 = d1, d0     # fechas al reves: se ordenan en vez de devolver vacio
+        crudas = [p for p in crudas if (dia_de(p) or '') and d0 <= dia_de(p) <= d1]
+    elif dia:
         crudas = [p for p in crudas if dia_de(p) == dia]
     coords = _coords() if coords is None else coords
 
@@ -315,7 +325,7 @@ def calcular(horas=24.0, coords=None, dia=None):
     tipos = _tipos_por_matricula(mats)
     flota = avion_model.get_flota()
 
-    est = {'partidas': len(crudas), 'dia': dia,
+    est = {'partidas': len(crudas), 'dia': dia, 'desde': desde, 'hasta': hasta,
            # Cuantas de las partidas del periodo ya despegaron. Con el dia en curso esto
            # es lo que dice si el volumen esta completo o a mitad de camino.
            'despegadas': sum(1 for p in crudas if p.get('real_epoch')),
@@ -473,25 +483,25 @@ def _clave_de_archivo():
         return None
 
 
-def filas(horas=24.0, usar_cache=True, dia=None):
+def filas(horas=24.0, usar_cache=True, dia=None, desde=None, hasta=None):
     """Las filas del filtro, cacheadas hasta que el radar vuelva a escribir."""
-    clave = (_clave_de_archivo(), horas, dia)
+    clave = (_clave_de_archivo(), horas, dia, desde, hasta)
     with _lock:
         if usar_cache and _cache['clave'] == clave and _cache['filas'] is not None:
             return _cache['filas'], _cache['estado']
-        fs, est = calcular(horas, dia=dia)
+        fs, est = calcular(horas, dia=dia, desde=desde, hasta=hasta)
         _cache['clave'], _cache['filas'], _cache['estado'] = clave, fs, est
         return fs, est
 
 
-def resumen(horas=24.0, dia=None):
+def resumen(horas=24.0, dia=None, desde=None, hasta=None):
     """Lo que necesita el banner del mapa: totales y el rango de YPF.
 
     El share va como RANGO. Con la lista de clientes no exhaustiva, el piso son los
     m3 de los clientes confirmados y el techo suma los sin clasificar; dar un numero
     solo seria elegir uno de los dos sin decirlo.
     """
-    fs, est = filas(horas, dia=dia)
+    fs, est = filas(horas, dia=dia, desde=desde, hasta=hasta)
     tot = sum(f['m3'] for f in fs)
     por = {}
     for f in fs:

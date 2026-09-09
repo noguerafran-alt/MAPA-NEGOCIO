@@ -279,6 +279,23 @@ function chip(prov) {
 
 function pintar(d) {
   const total = d.total || 0;
+
+  // Si el denominador no cierra, se dice y no se dibujan porcentajes que no suman 100.
+  // Paso con una version vieja: mostraba "209 de 714 partidas, 29,3% de YPF" con los
+  // porcentajes sumando 37,7%, porque el numerador eran las despegadas y el denominador
+  // incluia las 445 programadas. Se leia como un resultado, no como un error, y el share
+  // de YPF quedaba a menos de la mitad.
+  if (d.denominador_inconsistente) {
+    const av = document.createElement('div');
+    av.className = 'banda mal';
+    av.innerHTML = '<b>Los porcentajes no cierran</b> — ' + esc(d.denominador_inconsistente)
+      + '. No se muestran hasta que el denominador sea correcto: si estas viendo esto en'
+      + ' una PC con una version vieja del tablero, actualizala.';
+    document.body.insertBefore(av, document.body.firstChild);
+    return;
+  }
+  const ahora = d.ahora_epoch;
+
   const ahora = d.ahora_epoch;
 
   // ---- la banda de estado. La version ruidosa es la que avisa.

@@ -394,10 +394,17 @@
         </select>
         <!-- El día se puebla desde el servidor con los que TIENEN datos, y cada opción
              dice cuántas partidas: un día con 30 y otro con 700 no se leen igual. -->
-        <label for="msrtic-dia" style="margin-left:6px;">Día:</label>
-        <select id="msrtic-dia" onchange="cambiarVentanaMsRtic()">
-          <option value="" selected>—</option>
-        </select>
+        <!-- Rango de días con el calendario nativo. `min` y `max` salen de los días que
+             TIENEN datos, así que no se puede elegir una fecha donde no hay nada. Dejar
+             sólo "Del" ya sirve: es "de ese día en adelante". -->
+        <label for="msrtic-desde" style="margin-left:6px;">Del</label>
+        <input type="date" id="msrtic-desde" onchange="cambiarVentanaMsRtic()"
+               style="font-size:12px;">
+        <label for="msrtic-hasta">al</label>
+        <input type="date" id="msrtic-hasta" onchange="cambiarVentanaMsRtic()"
+               style="font-size:12px;">
+        <button class="toggle-btn" onclick="limpiarRangoMsRtic()"
+                title="Volver a la ventana de horas">Limpiar</button>
         <span id="msrtic-aviso-dia" style="font-size:11.5px; margin-left:8px;"></span>
       </span>
     </div>
@@ -1293,10 +1300,17 @@ function cambiarVentanaMsRtic() {
   // Elegir un día apaga la ventana de horas y al revés: son dos cortes distintos del
   // mismo dato, y dejar los dos puestos daría un subconjunto que nadie pidió.
   const hs = document.getElementById('msrtic-horas');
-  const dia = document.getElementById('msrtic-dia');
-  if (document.activeElement === dia && dia.value) hs.value = 'todo';
-  if (document.activeElement === hs) dia.value = '';
-  hs.disabled = !!dia.value;
+  const d0 = document.getElementById('msrtic-desde');
+  const d1 = document.getElementById('msrtic-hasta');
+  if (document.activeElement === hs) { d0.value = ''; d1.value = ''; }
+  hs.disabled = !!(d0.value || d1.value);
+  cargarMsRtic().then(() => render());
+}
+
+function limpiarRangoMsRtic() {
+  document.getElementById('msrtic-desde').value = '';
+  document.getElementById('msrtic-hasta').value = '';
+  document.getElementById('msrtic-horas').disabled = false;
   cargarMsRtic().then(() => render());
 }
 
@@ -1306,7 +1320,8 @@ function cambiarVentanaMsRtic() {
 function msRticAvisoDia() {
   const el = document.getElementById('msrtic-aviso-dia');
   if (!el) return;
-  const d = document.getElementById('msrtic-dia').value;
+  const d = (document.getElementById('msrtic-desde') || {}).value
+         || (document.getElementById('msrtic-hasta') || {}).value;
   if (!msRtic || !msRtic.disponible || !d) { el.textContent = ''; return; }
   const e = msRtic.estado || {}, r = msRtic.resumen || {};
   const partidas = e.partidas || 0, salidas = e.despegadas || 0;
@@ -1320,23 +1335,26 @@ function msRticAvisoDia() {
 function cargarMsRtic() {
   const sel = document.getElementById('msrtic-horas');
   const horas = sel ? sel.value : 'todo';
-  const selDia = document.getElementById('msrtic-dia');
-  const dia = selDia ? selDia.value : '';
+  const r0 = (document.getElementById('msrtic-desde') || {}).value || '';
+  const r1 = (document.getElementById('msrtic-hasta') || {}).value || '';
   return fetch('/api/msrtic?horas=' + encodeURIComponent(horas)
-               + (dia ? '&dia=' + encodeURIComponent(dia) : '')).then(r => r.json()).then(d => {
+               + (r0 ? '&desde=' + encodeURIComponent(r0) : '')
+               + (r1 ? '&hasta=' + encodeURIComponent(r1) : '')).then(r => r.json()).then(d => {
     msRtic = d;
     if (d && d.disponible) {
       document.getElementById('grupo-msrtic').style.display = '';
       document.getElementById('divider-msrtic').style.display = '';
       // Se repuebla en cada carga: aparece un día nuevo en cuanto el sondeo cruza la
       // medianoche, sin que haya que recargar la página.
-      if (selDia && d.dias) {
-        const elegido = selDia.value;
-        selDia.innerHTML = '<option value="">—</option>' + d.dias.map(x => {
-          const p = x.dia.split('-');
-          return `<option value="${x.dia}">${p[2]}/${p[1]} (${x.partidas})</option>`;
-        }).join('');
-        selDia.value = elegido;
+      // El calendario se acota a los días que TIENEN datos: elegir una fecha vacía
+      // dibujaría un mapa vacío sin explicación. Se recalcula en cada carga, así que
+      // aparece un día nuevo en cuanto el sondeo cruza la medianoche.
+      if (d.dias && d.dias.length) {
+        const fechas = d.dias.map(x => x.dia).sort();
+        for (const id of ['msrtic-desde', 'msrtic-hasta']) {
+          const inp = document.getElementById(id);
+          if (inp) { inp.min = fechas[0]; inp.max = fechas[fechas.length - 1]; }
+        }
       }
       msRticAvisoDia();
     } else if (d && d.motivo) {
@@ -2266,10 +2284,12 @@ function render(skipListRebuild) {
   // poner período — afirma una fecha equivocada con total seguridad.
   let periodoLabel = `${monthsLabel} ${yearsLabel}`;
   if (msRticActivo) {
-    const dSel = (document.getElementById('msrtic-dia') || {}).value;
-    if (dSel) {
-      const p = dSel.split('-');
-      periodoLabel = `${p[2]}/${p[1]}/${p[0]} (AA2000)`;
+    const q0 = (document.getElementById('msrtic-desde') || {}).value;
+    const q1 = (document.getElementById('msrtic-hasta') || {}).value;
+    const corto = (iso) => iso ? iso.slice(8, 10) + '/' + iso.slice(5, 7) : '';
+    if (q0 || q1) {
+      periodoLabel = (q0 && q1 && q0 !== q1) ? `${corto(q0)} al ${corto(q1)} (AA2000)`
+                   : `${corto(q0 || q1)} (AA2000)`;
     } else {
       const hs = (document.getElementById('msrtic-horas') || {}).value;
       periodoLabel = hs === 'todo' ? 'Todo lo grabado (AA2000)' : `Últimas ${hs} h (AA2000)`;
