@@ -1249,6 +1249,103 @@ def quien_cargo_rutas_csv():
                           filas)
 
 
+@app.route('/rutas-empresas.xlsx')
+@requiere_nivel(1)
+def rutas_empresas_xlsx():
+    """La planilla de trabajo para declarar el proveedor por RUTA Y AEROLINEA.
+
+    POR QUE HACE FALTA OTRA DIMENSION. `proveedores.json` declara el proveedor por ruta
+    dirigida, y para el cabotaje alcanza: si dos aerolineas hacen AEP-BRC cargan en la
+    misma aeroplanta. En los INTERNACIONALES no: la misma ruta la operan varias
+    aerolineas y cada una puede tener su proveedor. Medido sobre lo sondeado: 258 pares
+    (ruta, aerolinea) sobre 182 rutas, y **53 rutas con mas de una aerolinea**. Hoy todas
+    heredan el proveedor de la ruta -- EZE-MAD sale "YPF" para Iberia, Aerolineas, Air
+    Europa y Plus Ultra por igual -- y eso puede estar mal en cualquiera de ellas.
+
+    Esta planilla sale de lo que SE OBSERVO, no de un catalogo teorico: solo lista pares
+    que aparecieron en el feed, con cuantas partidas vale cada uno. Asi lo que hay que
+    completar esta acotado a lo que existe de verdad, y ordenado por lo que mas pesa.
+
+    La columna a llenar es `PROVEEDOR (completar)`, prellenada con el de la ruta para no
+    tipear de nuevo lo que ya se sabe. `Revisar?` marca las filas donde la ruta tiene mas
+    de una aerolinea: son las unicas donde el valor heredado puede estar mal.
+    """
+    if quien_cargo is None or msrtic is None or intercambio_ms is None:
+        return jsonify({'error': 'modulo no disponible: %s' % MSRTIC_ERROR}), 503
+    import collections
+    import time as _t
+    tabla = proveedores.cargar_tabla(msrtic.tabla_proveedores())
+    t = quien_cargo.tablero(msrtic.base_oficial(), None, None, tabla)
+    if not t:
+        return jsonify({'error': 'todavia no hay partidas sondeadas'}), 409
+
+    pares, info = collections.Counter(), {}
+    for v in t['vuelos']:
+        o, d = v.get('origen'), v.get('destino')
+        al = (v.get('aerolinea_id') or '').strip().upper()
+        if not (o and d and al):
+            continue
+        k = (o, d, al)
+        pares[k] += 1
+        info.setdefault(k, {'aerolinea': v.get('aerolinea') or '',
+                            'destino_nombre': v.get('destino_nombre') or '',
+                            'proveedor': v.get('proveedor') or '',
+                            'motivo': v.get('motivo') or ''})
+    if not pares:
+        return jsonify({'error': 'no se pudo armar ningun par ruta-aerolinea'}), 409
+
+    por_ruta = collections.Counter((o, d) for o, d, _ in pares)
+    filas = []
+    for (o, d, al), n in pares.most_common():
+        i = info[(o, d, al)]
+        filas.append({
+            'Ruta': '%s-%s' % (o, d), 'Origen': o, 'Destino': d,
+            'Destino nombre': i['destino_nombre'],
+            'Aerolinea': al, 'Aerolinea nombre': i['aerolinea'],
+            'Partidas observadas': n,
+            'Proveedor actual (por ruta)': i['proveedor'] or 'sin resolver',
+            'Por que': i['motivo'],
+            # Prellenado, para corregir en vez de tipear todo. Vacio cuando no se sabe:
+            # asi la celda vacia es "falta declarar" y no "quedo como estaba".
+            'PROVEEDOR (completar)': i['proveedor'] or '',
+            'Revisar?': 'SI' if por_ruta[(o, d)] > 1 else '',
+            'Notas': '',
+        })
+
+    cols = list(filas[0].keys())
+    meta = {
+        'generado': _t.strftime('%Y-%m-%dT%H:%M:%S'),
+        'para_que': ('Declarar el proveedor por RUTA Y AEROLINEA. Completar la columna '
+                     '"PROVEEDOR (completar)" con YPF, Axion, Raizen o lo que corresponda.'),
+        'ojo': ('Las filas con Revisar?=SI son rutas operadas por mas de una aerolinea: '
+                'ahi el proveedor heredado de la ruta puede estar mal.'),
+        'pares_ruta_aerolinea': len(filas),
+        'rutas': len(por_ruta),
+        'rutas_con_varias_aerolineas': sum(1 for k, v in por_ruta.items() if v > 1),
+        'origen': 'partidas sondeadas de AA2000 por el mapa-negocio web',
+    }
+    from openpyxl import Workbook
+    wb = Workbook()
+    h = wb.active
+    h.title = 'rutas_empresas'
+    h.append(cols)
+    for f in filas:
+        h.append([f[c] for c in cols])
+    hm = wb.create_sheet('meta')
+    hm.append(['clave', 'valor'])
+    for k, v in sorted(meta.items()):
+        hm.append([k, v])
+    import io as _io
+    buf = _io.BytesIO()
+    wb.save(buf)
+    resp = make_response(buf.getvalue())
+    resp.headers['Content-Type'] = ('application/vnd.openxmlformats-officedocument'
+                                    '.spreadsheetml.sheet')
+    resp.headers['Content-Disposition'] = (
+        'attachment; filename=rutas-empresas-%s.xlsx' % _t.strftime('%Y%m%d'))
+    return resp
+
+
 @app.route('/api/msrtic/export.xlsx')
 def api_msrtic_export():
     """Baja el acumulado de partidas como Excel, para pegarlo en el SharePoint.
