@@ -83,6 +83,16 @@
                    border-radius: 8px; padding: 5px 9px; font: inherit; cursor: pointer; }
   .filtro select:focus { border-color: #4c7cf0; outline: none; }
 
+  /* La barra de filtros de la tabla por ruta. Mismo lenguaje que el selector de dia. */
+  .filtro input[type="search"] {
+    background: #0f1830; color: #eee; border: 1px solid #2a3358; border-radius: 8px;
+    padding: 5px 10px; font: inherit; font-size: .82rem; min-width: 220px;
+  }
+  .filtro input[type="search"]:focus { border-color: #4c7cf0; outline: none; }
+  .filtro .chk { display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+                 user-select: none; }
+  .filtro .chk input { accent-color: #4c7cf0; cursor: pointer; }
+
   /* ---- tabla por ruta, editable ---- */
   tr.ruta-fila { cursor: pointer; }
   tr.ruta-fila:hover { background: rgba(76,124,240,0.07); }
@@ -175,6 +185,10 @@
 
 <div class="panel">
   <h2>Por ruta</h2>
+  {# Los filtros existen para ETIQUETAR, no para explorar: con 124 rutas en pantalla,
+     encontrar la que hay que declarar era scrollear. Por eso el atajo de "sin declarar"
+     esta al lado del buscador y no escondido en un menu. #}
+  <div id="filtro-rutas"></div>
   <div class="table-wrap"><table id="t-rutas"></table></div>
   <p class="nota">
     Es la unidad que consume el modelo de consumo. La ruta es <b>dirigida</b>, y
@@ -350,9 +364,153 @@ async function guardarProveedor(el, ruta, aerolinea) {
   }
 }
 
+/* EL FILTRO DE LA TABLA POR RUTA. Vive afuera del render, como `rutasAbiertas`, porque
+   tiene que sobrevivir al refresco de los 60 s: si se limpiara solo, etiquetar seria
+   imposible -- se escribe el destino, aparece la ruta, y antes de tocar el selector la
+   pantalla se recarga y vuelve la lista entera. */
+const filtroRutas = { texto: "", soloSinDeclarar: false };
+
+function aplicarFiltroRutas(filas) {
+  const t = filtroRutas.texto.trim().toLowerCase();
+  return filas.filter((f) => {
+    // "sin declarar" es la ruta que la planilla no resuelve: no tiene proveedor, o lo
+    // tiene sólo porque es del interior (que no se declara ni hace falta). Se filtra
+    // por el MOTIVO y no por el proveedor: una ruta con proveedor puede seguir siendo
+    // un hueco si nadie la declaró.
+    if (filtroRutas.soloSinDeclarar &&
+        !(f.motivo === "ruta_no_declarada" || f.motivo === "sin_planilla" ||
+          f.motivo === "solo_excepciones" || !f.proveedor)) return false;
+    if (!t) return true;
+    // Se busca en el codigo Y en el nombre del destino: se acuerda "Bariloche" o "BRC"
+    // segun el dia, y obligar a saber el IATA seria un filtro que solo sirve a quien ya
+    // sabe donde esta lo que busca.
+    return (f.ruta || "").toLowerCase().includes(t) ||
+           (f.destino_nombre || "").toLowerCase().includes(t) ||
+           (f.destino || "").toLowerCase().includes(t) ||
+           (f.aerolineas || []).join(" ").toLowerCase().includes(t);
+  });
+}
+
+function pintarFiltroRutas(total, mostradas) {
+  const el = document.getElementById("filtro-rutas");
+  if (!el) return;
+  el.innerHTML = `
+    <div class="filtro">
+      <input id="buscar-ruta" type="search" placeholder="Destino, ruta o aerolínea…"
+             value="${esc(filtroRutas.texto)}" oninput="filtrarRutas(this.value)">
+      <label class="chk"><input type="checkbox" id="solo-faltan"
+             ${filtroRutas.soloSinDeclarar ? "checked" : ""}
+             onchange="filtrarSoloFaltan(this.checked)"> sólo sin declarar</label>
+      <span class="muted">${mostradas === total ? `${total} rutas`
+                            : `${mostradas} de ${total} rutas`}</span>
+    </div>`;
+  // El foco se pierde al repintar el input. Se devuelve al final para poder seguir
+  // escribiendo: sin esto hay que volver a hacer click despues de cada letra.
+  const inp = document.getElementById("buscar-ruta");
+  if (inp && filtroRutas.enfocado) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+}
+
+function filtrarRutas(v) {
+  filtroRutas.texto = v;
+  filtroRutas.enfocado = true;
+  tablaRutas(document.getElementById("t-rutas"), window.__rutas || [], window.__d || {});
+}
+
+function filtrarSoloFaltan(v) {
+  filtroRutas.soloSinDeclarar = v;
+  filtroRutas.enfocado = false;
+  tablaRutas(document.getElementById("t-rutas"), window.__rutas || [], window.__d || {});
+}
+
+
+/* EL DIA QUE SE ESTA MIRANDO. Arranca en null y lo fija la primera respuesta: el
+   servidor decide el default (el dia corriente), no la pantalla. Asi hay UN solo lugar
+   donde esta escrito cual es el dia por defecto. */
+let diaElegido = null;
+
+function pintarFiltroDia(d) {
+  const dias = d.dias || [];
+  const actual = d.dia || "todo";
+  // Se listan los dias que EXISTEN, con su conteo. Un calendario abierto seria casi
+  // todo fechas vacias, y el conteo es lo que explica por que el dia en curso puede
+  // tener pocas partidas medidas: esta a medio sondear, no es que no volo nadie.
+  const opts = dias.map((x) => {
+    const sel = x.dia === actual ? " selected" : "";
+    return `<option value="${esc(x.dia)}"${sel}>${esc(x.dia)} — ${x.despegadas} de ${x.partidas} despegadas</option>`;
+  }).join("");
+  document.getElementById("filtro-dia").innerHTML = `
+    <div class="filtro">
+      <label for="sel-dia">Día:</label>
+      <select id="sel-dia" onchange="cambiarDia(this.value)">
+        ${opts}
+        <option value="todo"${actual === "todo" ? " selected" : ""}>Todo lo acumulado</option>
+      </select>
+      ${dias.length ? "" : '<span class="muted">todavía no hay partidas grabadas</span>'}
+    </div>`;
+}
+
+function cambiarDia(v) {
+  diaElegido = v;
+  refrescar();
+}
+
+
+
+
+
+function opcionesProveedor(actual, d) {
+  // Los proveedores que EXISTEN en los datos, no una lista fija: si manana
+  // aparece uno nuevo en la planilla, esta ahi sin tocar codigo.
+  const vistos = new Set(Object.keys(d.por_proveedor || {}));
+  (d.por_ruta || []).forEach((r) => {
+    if (r.proveedor) vistos.add(r.proveedor);
+    (r.por_aerolinea || []).forEach((a) => { if (a.proveedor) vistos.add(a.proveedor); });
+  });
+  if (actual) vistos.add(actual);
+  const act = (actual || "").toUpperCase();
+  // "sin declarar" primero y vacio a proposito: es el estado inicial de todo y
+  // tiene que poder elegirse para BORRAR una declaracion. Una ruta sin declarar
+  // se cuenta como hueco y se muestra; no es lo mismo que decir "no se sabe".
+  return ['<option value="">sin declarar</option>'].concat(
+    [...vistos].sort().map((p) =>
+      `<option value="${esc(p)}"${p.toUpperCase() === act ? " selected" : ""}>${esc(p)}</option>`)
+  ).join("");
+}
+
+async function guardarProveedor(el, ruta, aerolinea) {
+  const antes = el.dataset.antes || "";
+  el.disabled = true;
+  try {
+    const r = await fetch("/api/quien-cargo/proveedor", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ruta, aerolinea: aerolinea || null, proveedor: el.value }),
+    });
+    const j = await r.json();
+    if (!r.ok || j.error) throw new Error(j.error || ("HTTP " + r.status));
+    // Se vuelve a pedir todo en vez de parchear la fila: el cambio mueve los
+    // porcentajes, las tarjetas y el vuelo-por-vuelo. Parchear solo la fila
+    // dejaria la pantalla mostrando un total que ya no corresponde.
+    await refrescar();
+  } catch (e) {
+    // Se vuelve al valor anterior: dejar el select en lo que el usuario eligio
+    // despues de que la escritura fallo es la peor mentira posible acá.
+    el.value = antes;
+    el.disabled = false;
+    alert("No se pudo guardar: " + e.message);
+  }
+}
+
 function tablaRutas(el, filas, d) {
+  // Se guardan para poder repintar al filtrar sin volver a pedirle nada al servidor:
+  // filtrar es una operacion de la pantalla, no del dato.
+  window.__rutas = filas;
+  window.__d = d;
+  const todas = filas;
+  filas = aplicarFiltroRutas(filas);
+  pintarFiltroRutas(todas.length, filas.length);
   if (!filas.length) {
-    el.innerHTML = `<tr><td class="empty">nada todavía</td></tr>`;
+    el.innerHTML = `<tr><td class="empty">${todas.length ? "ninguna ruta coincide con el filtro" : "nada todavía"}</td></tr>`;
     return;
   }
   const cabecera = ["", "Ruta", "Destino", "Proveedor", "Por qué", "Partidas", "La volaron"]
