@@ -82,6 +82,10 @@
   .filtro select { background: #0f1830; color: #eee; border: 1px solid #2a3358;
                    border-radius: 8px; padding: 5px 9px; font: inherit; cursor: pointer; }
   .filtro select:focus { border-color: #4c7cf0; outline: none; }
+  /* El aviso de que se cayo a otro dia va en ambar y AL LADO del selector: tiene que
+     leerse antes que los numeros, porque es lo que dice de cuando son. */
+  .aviso-dia { color: #ffd9a0; background: rgba(60,44,10,0.55); border: 1px solid #6b551f;
+               border-radius: 8px; padding: 3px 9px; font-size: .78rem; }
 
   /* La barra de filtros de la tabla por ruta. Mismo lenguaje que el selector de dia. */
   .filtro input[type="search"] {
@@ -128,6 +132,10 @@
      deformaria. `object-fit: contain` los deja respirar dentro del alto del chip. */
   .logo-prov { height: 13px; width: auto; max-width: 34px; object-fit: contain;
                vertical-align: middle; }
+  /* Las de aerolinea son marcas denominativas y necesitan mas ancho que las redondas de
+     las petroleras; el alto manda igual para que las filas no se muevan. */
+  .logo-aero { height: 14px; width: auto; max-width: 56px; object-fit: contain;
+               vertical-align: middle; margin-right: 5px; }
   .chip.ypf   { background: #14532d; color: #86efac; }
   .chip.p1    { background: #3a1b1b; color: #fecaca; }
   .chip.p2    { background: #2c2540; color: #c4b5fd; }
@@ -290,6 +298,24 @@ function logoProveedor(prov) {
                onerror="this.remove()">`;
 }
 
+/* LOGOS DE AEROLINEA, por codigo IATA. Solo estan las que mas vuelan: dibujar las 37
+   que aparecen en los datos seria trabajo sin retorno -- la cola son una o dos partidas
+   cada una -- y las que faltan simplemente no muestran logo, que es el mismo camino que
+   ya recorre `onerror`.
+
+   ATENCION AL AGREGAR UNA: el archivo se llama por el codigo en minuscula, asi que
+   alcanza con dejar el .svg en static/logos/ y sumar el codigo a este set. Si el codigo
+   no esta aca no se pide el archivo, para no generar un 404 por cada fila de una
+   aerolinea sin logo. */
+const LOGO_AEROLINEA = new Set(['AR', 'WJ', 'H2', 'G3', 'LA', 'JJ']);
+
+function logoAerolinea(id) {
+  const c = (id || '').trim().toUpperCase();
+  if (!LOGO_AEROLINEA.has(c)) return '';
+  return `<img class="logo-aero" src="/static/logos/${c.toLowerCase()}.svg"`
+       + ` alt="${esc(c)}" onerror="this.remove()">`;
+}
+
 function chip(prov) {
   // El logo NO reemplaza al texto: un chip que solo muestra una imagen deja de ser
   // legible si el archivo falta, si el usuario tiene las imagenes apagadas, o si alguien
@@ -328,6 +354,14 @@ function pintarFiltroDia(d) {
     const sel = x.dia === actual ? " selected" : "";
     return `<option value="${esc(x.dia)}"${sel}>${esc(x.dia)} — ${x.despegadas} de ${x.partidas} despegadas</option>`;
   }).join("");
+  // Si hoy todavia no tiene ninguna partida confirmada, el servidor sirve el ultimo dia
+  // que si tiene. HAY QUE DECIRLO: mostrar los datos de ayer sin aclararlo es la clase
+  // de error que no se ve, porque los numeros son correctos y lo unico mal es la fecha
+  // que uno les supone.
+  const cayo = d.dia_sin_datos
+    ? `<span class="aviso-dia">${esc(d.dia_sin_datos)} todavía no tiene partidas`
+      + ` confirmadas — se muestra el último día con datos</span>`
+    : "";
   document.getElementById("filtro-dia").innerHTML = `
     <div class="filtro">
       <label for="sel-dia">Día:</label>
@@ -336,6 +370,7 @@ function pintarFiltroDia(d) {
         <option value="todo"${actual === "todo" ? " selected" : ""}>Todo lo acumulado</option>
       </select>
       ${dias.length ? "" : '<span class="muted">todavía no hay partidas grabadas</span>'}
+      ${cayo}
     </div>`;
 }
 
@@ -453,84 +488,6 @@ function filtrarSoloFaltan(v) {
 }
 
 
-/* EL DIA QUE SE ESTA MIRANDO. Arranca en null y lo fija la primera respuesta: el
-   servidor decide el default (el dia corriente), no la pantalla. Asi hay UN solo lugar
-   donde esta escrito cual es el dia por defecto. */
-let diaElegido = null;
-
-function pintarFiltroDia(d) {
-  const dias = d.dias || [];
-  const actual = d.dia || "todo";
-  // Se listan los dias que EXISTEN, con su conteo. Un calendario abierto seria casi
-  // todo fechas vacias, y el conteo es lo que explica por que el dia en curso puede
-  // tener pocas partidas medidas: esta a medio sondear, no es que no volo nadie.
-  const opts = dias.map((x) => {
-    const sel = x.dia === actual ? " selected" : "";
-    return `<option value="${esc(x.dia)}"${sel}>${esc(x.dia)} — ${x.despegadas} de ${x.partidas} despegadas</option>`;
-  }).join("");
-  document.getElementById("filtro-dia").innerHTML = `
-    <div class="filtro">
-      <label for="sel-dia">Día:</label>
-      <select id="sel-dia" onchange="cambiarDia(this.value)">
-        ${opts}
-        <option value="todo"${actual === "todo" ? " selected" : ""}>Todo lo acumulado</option>
-      </select>
-      ${dias.length ? "" : '<span class="muted">todavía no hay partidas grabadas</span>'}
-    </div>`;
-}
-
-function cambiarDia(v) {
-  diaElegido = v;
-  refrescar();
-}
-
-
-
-
-
-function opcionesProveedor(actual, d) {
-  // Los proveedores que EXISTEN en los datos, no una lista fija: si manana
-  // aparece uno nuevo en la planilla, esta ahi sin tocar codigo.
-  const vistos = new Set(Object.keys(d.por_proveedor || {}));
-  (d.por_ruta || []).forEach((r) => {
-    if (r.proveedor) vistos.add(r.proveedor);
-    (r.por_aerolinea || []).forEach((a) => { if (a.proveedor) vistos.add(a.proveedor); });
-  });
-  if (actual) vistos.add(actual);
-  const act = (actual || "").toUpperCase();
-  // "sin declarar" primero y vacio a proposito: es el estado inicial de todo y
-  // tiene que poder elegirse para BORRAR una declaracion. Una ruta sin declarar
-  // se cuenta como hueco y se muestra; no es lo mismo que decir "no se sabe".
-  return ['<option value="">sin declarar</option>'].concat(
-    [...vistos].sort().map((p) =>
-      `<option value="${esc(p)}"${p.toUpperCase() === act ? " selected" : ""}>${esc(p)}</option>`)
-  ).join("");
-}
-
-async function guardarProveedor(el, ruta, aerolinea) {
-  const antes = el.dataset.antes || "";
-  el.disabled = true;
-  try {
-    const r = await fetch("/api/quien-cargo/proveedor", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ruta, aerolinea: aerolinea || null, proveedor: el.value }),
-    });
-    const j = await r.json();
-    if (!r.ok || j.error) throw new Error(j.error || ("HTTP " + r.status));
-    // Se vuelve a pedir todo en vez de parchear la fila: el cambio mueve los
-    // porcentajes, las tarjetas y el vuelo-por-vuelo. Parchear solo la fila
-    // dejaria la pantalla mostrando un total que ya no corresponde.
-    await refrescar();
-  } catch (e) {
-    // Se vuelve al valor anterior: dejar el select en lo que el usuario eligio
-    // despues de que la escritura fallo es la peor mentira posible acá.
-    el.value = antes;
-    el.disabled = false;
-    alert("No se pudo guardar: " + e.message);
-  }
-}
-
 function tablaRutas(el, filas, d) {
   // Se guardan para poder repintar al filtrar sin volver a pedirle nada al servidor:
   // filtrar es una operacion de la pantalla, no del dato.
@@ -576,7 +533,7 @@ function tablaRutas(el, filas, d) {
       <tr class="fila-aero">
         <td></td>
         <td class="num">${a.vuelos}</td>
-        <td colspan="1"><span class="cod">${esc(a.aerolinea_id)}</span>
+        <td colspan="1">${logoAerolinea(a.aerolinea_id)}<span class="cod">${esc(a.aerolinea_id)}</span>
             <span class="muted">${esc(a.aerolinea) || ""}</span></td>
         <td>${editable
               ? `<select class="sel-prov chico" data-antes="${esc(a.proveedor || "")}"

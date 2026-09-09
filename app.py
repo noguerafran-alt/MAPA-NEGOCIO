@@ -1131,13 +1131,32 @@ def api_quien_cargo():
     # servir el historico entero mezcla semanas en un solo porcentaje que no responde a
     # ninguna fecha. `dia=todo` es la salida explicita para ver el acumulado.
     _dia = (request.args.get('dia') or '').strip()
+    dia_por_defecto = False
     if _dia == 'todo':
         dia = None
+    elif _dia:
+        dia = _dia
     else:
-        dia = _dia or datetime.now().strftime('%Y-%m-%d')
+        dia = datetime.now().strftime('%Y-%m-%d')
+        dia_por_defecto = True
     db = msrtic.base_oficial()
     tabla = proveedores.cargar_tabla(msrtic.tabla_proveedores())
     try:
+        # EL DIA CORRIENTE PUEDE NO TENER NINGUNA PARTIDA CONFIRMADA TODAVIA, y ahi la
+        # pantalla salia entera vacia: cuatro tablas sin una fila y un cartel que nadie
+        # leia. Pasa todos los dias hasta que el sondeo capture la primera hora de
+        # despegue, y con el sondeo apagado pasa el dia entero.
+        #
+        # Solo cuando el dia NO fue pedido: si alguien elige un dia vacio a proposito,
+        # se le muestra vacio. Cambiarle el dia elegido seria mentirle sobre que esta
+        # mirando; hacerlo con el default es elegir por el, que es lo que un default es.
+        _dias = quien_cargo.dias_disponibles(db)
+        dia_cayo_a = None
+        if dia_por_defecto and not any(
+                x['dia'] == dia and x['despegadas'] for x in _dias):
+            _con_datos = next((x['dia'] for x in _dias if x['despegadas']), None)
+            if _con_datos:
+                dia_cayo_a, dia = dia, _con_datos
         tablero = quien_cargo.tablero(db, horas, origen, tabla, dia=dia)
         # `origen` VA A LAS DOS. Pasarselo solo al tablero filtra la lista y deja
         # los porcentajes nacionales al lado: el mismo error de comparar una parte
@@ -1146,7 +1165,10 @@ def api_quien_cargo():
         est = sondeo.estado() if sondeo is not None else {'activo': False}
         _payload = _quien_cargo_plano(tablero, resumen, est,
                                       msrtic.tabla_proveedores())
-        _payload['dias'] = quien_cargo.dias_disponibles(db)
+        _payload['dias'] = _dias
+        # De que dia se cayo, para que la pantalla lo diga en vez de mostrar
+        # datos de ayer como si fueran los de hoy.
+        _payload['dia_sin_datos'] = dia_cayo_a
         _payload['dia'] = dia
         return jsonify(_payload)
     except Exception as e:
