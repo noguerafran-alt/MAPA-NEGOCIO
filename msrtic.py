@@ -410,14 +410,25 @@ def calcular(horas=24.0, coords=None, dia=None, desde=None, hasta=None):
         if m3 is None:
             est['sin_consumo'] += 1
 
-        # QUIEN ABASTECE ES PROPIEDAD DE LA RUTA, NO DE LA AEROLINEA. La planilla de
-        # YPF esta armada por ruta dirigida: si dos aerolineas hacen AEP-BRC, las dos
-        # cargan con el mismo proveedor. Por eso el desagregado por aerolinea sirve
-        # para ver el CONSUMO de cada una, no para separar proveedores adentro de una
-        # ruta -- ahi el proveedor es uno solo.
+        # QUIEN ABASTECE ES PROPIEDAD DE LA RUTA -- la planilla de YPF esta armada por
+        # ruta dirigida, asi que si dos aerolineas hacen AEP-BRC las dos cargan con el
+        # mismo -- SALVO EXCEPCION DECLARADA. Desde el 2026-09-09 se puede declarar que
+        # una compania se aparta del proveedor de su ruta, y por eso aca se pasa la
+        # aerolinea: sin pasarla, una excepcion existiria en la pantalla de "Quien le
+        # cargo" y seria invisible en el mapa, que es peor que no tenerla -- dos
+        # pantallas del mismo sistema afirmando cosas distintas sobre el mismo vuelo.
+        #
+        # Casi siempre no cambia nada: sin excepcion declarada, la respuesta es la de la
+        # ruta. Pasarla nunca empeora la respuesta, como mucho la precisa.
         proveedor, motivo = None, 'sin_clasificador'
         if ms is not None and lista is not None:
             try:
+                q = ms.quien_cargo(cod_o, cod_d, lista,
+                                   (p.get('aerolinea_id') or '').strip().upper() or None)
+                proveedor, motivo = q.get('proveedor'), q.get('motivo')
+            except TypeError:
+                # Clasificador viejo, sin el 4to argumento: se sigue clasificando por
+                # ruta. Degradar es mejor que quedarse sin proveedor en todo el mapa.
                 q = ms.quien_cargo(cod_o, cod_d, lista)
                 proveedor, motivo = q.get('proveedor'), q.get('motivo')
             except Exception:

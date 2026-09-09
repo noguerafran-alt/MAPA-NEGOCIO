@@ -1219,6 +1219,11 @@ function msRticCandidatos() {
             dlon: f.dlon, tipo: f.tipo, vuelos: 0, pax: 0, vuelosConPax: 0,
             consumoM3: 0, medidos: 0, estimados: 0, distanciaKm: f.distancia_km,
             aerolineas: [], proveedor: f.proveedor, motivo: f.motivo,
+            // m3 por proveedor, para poder decir el share de YPF DE ESTA RUTA. Se
+            // acumula aca y no al final porque mas abajo consumoM3 se convierte en
+            // consumo POR VUELO: calcular el share sobre eso daria un porcentaje de
+            // un promedio, que no es el porcentaje del combustible.
+            m3PorProveedor: {}, mixta: false,
             avionCodigo: null, avion: null, asientos: null, consumoKg: null,
             avionFuente: null, avionEsReal: false, loadFactor: null, opciones: [] };
       porRuta.set(k, c);
@@ -1230,10 +1235,21 @@ function msRticCandidatos() {
     c.medidos += f.aviones_medidos;
     c.estimados += f.aviones_estimados;
     c.aerolineas.push(f);
-    // Todas las aerolíneas de una ruta comparten proveedor: la planilla de YPF está
-    // armada por ruta dirigida, no por aerolínea. Si difieren, gana 'sin_declarar'
-    // para no afirmar de más.
-    if (c.proveedor !== f.proveedor) c.proveedor = 'sin_declarar';
+    c.m3PorProveedor[f.proveedor] = (c.m3PorProveedor[f.proveedor] || 0) + f.m3;
+    // RUTA MIXTA: sus aerolíneas no comparten proveedor. Antes esto colapsaba la ruta
+    // entera a 'sin_declarar' para no afirmar de más, y era lo correcto cuando una ruta
+    // mixta sólo podía ser un error. Desde que la excepción por aerolínea se declara a
+    // propósito, colapsar tira información que alguien cargó a mano: la ruta sigue
+    // teniendo su proveedor y se marca que hay quien se aparta.
+    if (c.proveedor !== f.proveedor) {
+      c.mixta = true;
+      // El proveedor de la RUTA es el de la primera fila que NO sea excepción. Si todas
+      // lo son, la ruta no tiene respuesta propia y se dice.
+      if (c.motivo === 'planilla_aerolinea' && f.motivo !== 'planilla_aerolinea') {
+        c.proveedor = f.proveedor;
+        c.motivo = f.motivo;
+      }
+    }
   }
   const out = [];
   for (const c of porRuta.values()) {
@@ -1266,6 +1282,31 @@ function msRticCandidatos() {
 // RUTA: la planilla de YPF está armada por ruta dirigida, así que si Aerolíneas y
 // Flybondi hacen AEP→BRC, las dos cargan con el mismo. Repetirlo en cada renglón daría
 // a entender que se sabe aerolínea por aerolínea, que es justo lo que no se sabe.
+// EL SHARE DE YPF DE ESTA RUTA, en m³ y no en vuelos: la unidad del negocio es el
+// combustible, y dos vuelos de la misma ruta no cargan lo mismo si son un A330 y un
+// E190. Contar vuelos daria un porcentaje que suena parecido y no es el mismo numero.
+//
+// ES UN RANGO CUANDO HAY PARTIDAS SIN RESOLVER, igual que en la pantalla de "Quien le
+// cargo": lo que no se sabe no se reparte ni se saca del total. El piso es lo que YPF
+// tiene declarado; el techo, eso mas todo lo que podria llegar a ser suyo. Presentar un
+// numero unico ahi seria afirmar de mas justo donde falta el dato.
+function msRticShareRuta(r) {
+  const porProv = r.m3PorProveedor || {};
+  const total = Object.values(porProv).reduce((a, b) => a + b, 0);
+  if (!total) return '';
+  const ypf = porProv['YPF'] || 0;
+  const dudoso = porProv['sin_declarar'] || 0;
+  const piso = (ypf / total) * 100;
+  const techo = ((ypf + dudoso) / total) * 100;
+  const n = (x) => x.toLocaleString('es-AR', { maximumFractionDigits: 1 });
+  // Sin ambigüedad y sin nada de YPF, decirlo es mas util que un "0,0%" que se lee como
+  // un error de calculo.
+  if (dudoso === 0 && ypf === 0) return `MS YPF: <b>0%</b> <i>(toda la ruta es de otro)</i><br>`;
+  if (dudoso === 0) return `MS YPF: <b>${n(piso)}%</b> de los m³<br>`;
+  return `MS YPF: <b>entre ${n(piso)}% y ${n(techo)}%</b> de los m³`
+       + ` <i>(${n((dudoso / total) * 100)}% sin declarar)</i><br>`;
+}
+
 function msRticTooltip(r) {
   const NOMBRE = { planilla: 'declarado en la planilla',
                    interior: 'interior: no sale de AEP/EZE/COR',
@@ -1273,7 +1314,9 @@ function msRticTooltip(r) {
                    sin_planilla: 'sin planilla cargada' };
   let s = `<b>⏱ MS RTIC — partidas de hoy</b><br>`;
   s += `Abastece: <b>${r.proveedor === 'sin_declarar' ? 'sin declarar' : r.proveedor}</b>`;
-  s += ` <i>(${NOMBRE[r.motivo] || r.motivo})</i><br>`;
+  s += ` <i>(${NOMBRE[r.motivo] || r.motivo})</i>`;
+  s += r.mixta ? ` <b>· ruta mixta</b><br>` : `<br>`;
+  s += msRticShareRuta(r);
   s += `<b>Consumo por aerolínea</b><br>`;
   for (const f of r.aerolineas.slice(0, 8)) {
     s += `  • ${f.aerolinea}: ${f.m3.toLocaleString('es-AR',{maximumFractionDigits:0})} m³`
