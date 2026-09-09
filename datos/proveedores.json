@@ -1,6 +1,6 @@
 {
-  "actualizado": "2026-09-07",
-  "fuente": "planilla de YPF: RUTAS_QUE_ABASTECEMOS_EDITADO.xlsx",
+  "actualizado": "2026-09-09",
+  "fuente": "planilla de YPF: RUTAS_QUE_ABASTECEMOS_EDITADO.xlsx, mas rutas-empresas-corregido.xlsx (columna \"Proveedor actual\", declarada a mano el 2026-09-09): +8 rutas de EZE que estaban sin declarar",
   "rutas": {
     "AEP-AFA": "YPF",
     "AEP-ASU": "YPF",
@@ -150,6 +150,14 @@
     "EZE-USH": "Raizen",
     "EZE-VDM": "Axion",
     "EZE-VVI": "YPF",
-    "EZE-YUL": "YPF"
+    "EZE-YUL": "YPF",
+    "EZE-CDG": "YPF",
+    "EZE-JFK": "YPF",
+    "EZE-IAH": "YPF",
+    "EZE-UIO": "YPF",
+    "EZE-IST": "YPF",
+    "EZE-MDE": "YPF",
+    "EZE-GYE": "YPF",
+    "EZE-YYZ": "YPF"
   }
 }
