@@ -441,12 +441,21 @@ def calcular(horas=24.0, coords=None, dia=None, desde=None, hasta=None):
                  (p.get('aerolinea') or p.get('aerolinea_id') or 'Sin identificar').strip(),
                  (p.get('aerolinea_id') or '').strip().upper(),
                  bandera, motivo)
-        f = acum.setdefault(clave, {'vuelos': 0, 'pax': 0, 'con_pax': 0, 'm3': 0.0,
+        f = acum.setdefault(clave, {'vuelos': 0, 'pax': 0, 'con_pax': 0,
+                                    'con_pax_pos': 0, 'm3': 0.0,
                                     'medidos': 0, 'estimados': 0, 'aviones': {}})
         f['vuelos'] += 1
         if pax is not None:
             f['pax'] += pax
             f['con_pax'] += 1
+            # Y aparte los que informaron un pax MAYOR A CERO. En este feed un 0 es casi
+            # seguro "no informado todavia" y no "volo vacio" -- lo dice aa2000.py, que
+            # por eso distingue el 0 del vacio. Contar esos ceros como dato hunde la
+            # ocupacion: EZE-MAD tenia 7 de 7 vuelos "informados", todos en 0, y daba
+            # una ocupacion de 0,0 pax/vuelo para un A330 lleno. Con este conteo aparte
+            # la ocupacion se calcula sobre lo que de verdad se sabe.
+            if pax > 0:
+                f['con_pax_pos'] += 1
         if m3 is not None:
             f['m3'] += m3
         f['medidos' if medido else 'estimados'] += 1
@@ -473,6 +482,9 @@ def calcular(horas=24.0, coords=None, dia=None, desde=None, hasta=None):
             # ruta la subestima por siete. `vuelos_con_pax` deja verlo.
             'pax': v['pax'] if v['con_pax'] else None,
             'vuelos_con_pax': v['con_pax'],
+            # Cuantos de esos informaron un numero distinto de cero: es el denominador
+            # con el que la ocupacion significa algo.
+            'vuelos_con_pax_pos': v['con_pax_pos'],
             'm3': round(v['m3'], 1),
             'aviones_medidos': v['medidos'],
             'aviones_estimados': v['estimados'],

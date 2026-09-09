@@ -1,7 +1,14 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" translate="no">
+<!-- translate="no" + la meta de abajo: SIN ESTO EL NAVEGADOR TRADUCE LA PAGINA
+     y corrompe los datos. Visto en produccion: "al" del rango de fechas salia
+     "Alabama", "N/D" salia "Dakota del Norte" (lo leyo como el estado ND),
+     "Mes" salia "Yo" y el destino "Esquel" salia "Secuela". `lang="es"` solo no
+     alcanza: hay que pedir explicitamente que no traduzca. Un codigo IATA o una
+     abreviatura traducida no se ve como un error, se ve como un dato. -->
 <head>
 <meta charset="UTF-8">
+<meta name="google" content="notranslate">
 <title>Rutas Aéreas Argentinas — Vuelos, Pasajeros y Ocupación</title>
 <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
 <style>
@@ -1218,6 +1225,9 @@ function msRticCandidatos() {
       c = { o: f.origin, d: f.dest, olat: f.olat, olon: f.olon, dlat: f.dlat,
             dlon: f.dlon, tipo: f.tipo, vuelos: 0, pax: 0, vuelosConPax: 0,
             consumoM3: 0, medidos: 0, estimados: 0, distanciaKm: f.distancia_km,
+            // Vuelos que informaron un pax > 0. Es el denominador con el que la
+            // ocupacion significa algo: ver el comentario de con_pax_pos en msrtic.py.
+            vuelosConPaxPos: 0,
             aerolineas: [], proveedor: f.proveedor, motivo: f.motivo,
             // m3 por proveedor, para poder decir el share de YPF DE ESTA RUTA. Se
             // acumula aca y no al final porque mas abajo consumoM3 se convierte en
@@ -1231,6 +1241,7 @@ function msRticCandidatos() {
     c.vuelos += f.vuelos;
     c.pax += (f.pax || 0);
     c.vuelosConPax += (f.vuelos_con_pax || 0);
+    c.vuelosConPaxPos += (f.vuelos_con_pax_pos || 0);
     c.consumoM3 += f.m3;
     c.medidos += f.aviones_medidos;
     c.estimados += f.aviones_estimados;
@@ -1256,8 +1267,13 @@ function msRticCandidatos() {
     // La ocupación sólo se calcula sobre los vuelos que informaron pasajeros. Dividir
     // por el total daría una ocupación falsamente baja en el 79% de los casos, que es
     // la proporción de partidas sin pasajeros publicados.
-    c.ocup = (c.pax && c.vuelosConPax)
-      ? Math.round((c.pax / c.vuelosConPax) * 10) / 10 : null;
+    // LA OCUPACION SE DIVIDE POR LOS VUELOS QUE INFORMARON UN NUMERO REAL, no por los
+    // que "informaron". En este feed un 0 es casi seguro "no informado todavia": EZE-MAD
+    // tenia 7 de 7 vuelos informados, todos en 0, y salia 0,0 pax/vuelo para un A330.
+    // Dividir por los positivos da la ocupacion DE LO QUE SE SABE QUE VOLO, que es para
+    // lo que sirve el indicador.
+    c.ocup = (c.pax && c.vuelosConPaxPos)
+      ? Math.round((c.pax / c.vuelosConPaxPos) * 10) / 10 : null;
     // consumoM3 tiene que ser POR VUELO, no el total de la ruta: todo el mapa lo
     // multiplica por `vuelos` (los totales, el tooltip, la tabla y el ranking de
     // aeropuertos). Poniendo el total acá, el consumo se multiplicaba dos veces --
@@ -1290,6 +1306,17 @@ function msRticCandidatos() {
 // cargo": lo que no se sabe no se reparte ni se saca del total. El piso es lo que YPF
 // tiene declarado; el techo, eso mas todo lo que podria llegar a ser suyo. Presentar un
 // numero unico ahi seria afirmar de mas justo donde falta el dato.
+/* LOS PASAJEROS, DICIENDO DE CUANTOS VUELOS SALEN. Presentar la suma sola subestima la
+   ruta y no se nota: si 3 de 10 vuelos publican pasajeros, el numero es de tres vuelos y
+   se lee como el de la ruta entera. Y un "0" del feed es casi seguro "no informado", no
+   "volo vacio", asi que los ceros no cuentan como dato. */
+function paxConDato(r) {
+  const n = r.vuelosConPaxPos || 0;
+  if (!n) return `<br>Pasajeros: <i>ningún vuelo informó</i>`;
+  return `<br>Pasajeros: ${(r.pax || 0).toLocaleString('es-AR')}`
+       + ` <i>(informados en ${n} de ${r.vuelos})</i>`;
+}
+
 function msRticShareRuta(r) {
   const porProv = r.m3PorProveedor || {};
   const total = Object.values(porProv).reduce((a, b) => a + b, 0);
@@ -1630,8 +1657,12 @@ function openRouteDetail(routeKey) {
 
   document.getElementById('route-detail-title').textContent = `${route.o} → ${route.d}`;
   document.getElementById('rd-vuelos').textContent = route.vuelos.toLocaleString('es-AR');
-  document.getElementById('rd-pax').textContent = (route.pax || 0).toLocaleString('es-AR');
-  document.getElementById('rd-ocup').textContent = route.ocup != null ? `${route.ocup} pax/vuelo` : 'N/D';
+  // Mismo criterio que el tooltip: la suma sola subestima la ruta sin que se note.
+  document.getElementById('rd-pax').textContent = route.vuelosConPaxPos
+    ? `${(route.pax || 0).toLocaleString('es-AR')} (en ${route.vuelosConPaxPos} de ${route.vuelos})`
+    : 'ningún vuelo informó';
+  document.getElementById('rd-ocup').textContent = route.ocup != null
+    ? `${route.ocup} pax/vuelo` : 'sin dato';
   document.getElementById('rd-dist').textContent = route.distanciaKm != null
     ? `${route.distanciaKm.toLocaleString('es-AR')} km` : 'N/D';
 
@@ -2124,7 +2155,10 @@ function render(skipListRebuild) {
       hoverinfo: 'text',
       text: (hayProyeccion ? `<b>◇ PROYECTADO</b><br>` : '') +
             (r.aerolineas ? msRticTooltip(r) : '') +
-            `${r.o} → ${r.d}<br>Vuelos: ${r.vuelos.toLocaleString('es-AR')}<br>Pasajeros: ${(r.pax||0).toLocaleString('es-AR')}<br>Ocupación: ${r.ocup != null ? r.ocup : 'N/D'} pax/vuelo` +
+            `${r.o} → ${r.d}<br>Vuelos: ${r.vuelos.toLocaleString('es-AR')}` +
+            paxConDato(r) +
+            `<br>Ocupación: ${r.ocup != null ? r.ocup + ' pax/vuelo' : 'sin dato'}` +
+            (r.ocup != null && r.vuelosConPaxPos ? ` <i>(sobre ${r.vuelosConPaxPos} de ${r.vuelos} vuelos)</i>` : '') +
             (r.avion ? `<br>Avión asignado: ${r.avion} (${r.asientos||0} asientos)` +
               (r.loadFactor != null ? ` — ${(r.loadFactor*100).toLocaleString('es-AR',{maximumFractionDigits:0})}% de ocupación` : '') +
               `<br>Consumo est./vuelo: ${(r.consumoKg||0).toLocaleString('es-AR',{maximumFractionDigits:0})} kg (${(r.consumoM3||0).toLocaleString('es-AR',{maximumFractionDigits:2})} m³)` +
