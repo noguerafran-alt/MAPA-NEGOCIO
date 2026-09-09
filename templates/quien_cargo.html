@@ -127,6 +127,29 @@
   </a>
 </div>
 
+{# La distribucion de rutas, que es la vista con la que se trabaja la planilla: dice
+   cuanto vale cada ruta y quien la abastece. Las de proveedor vacio con motivo
+   `ruta_no_declarada` son exactamente las que hay que completar, y estan arriba las que
+   mas partidas cuestan. #}
+<div style="border:1px solid #2a3358; border-radius:10px; padding:12px 16px; margin:14px 0;
+     background:rgba(16,22,46,0.6);">
+  <b style="font-size:13px;">Bajar la distribución de rutas</b>
+  <p style="font-size:12px; color:#9aa4c7; line-height:1.55; margin:6px 0 10px;">
+    Una fila por <b>ruta dirigida</b> con su proveedor, cuántas partidas vale y qué
+    aerolíneas la operan, ordenada por volumen. <code>AEP-BRC</code> y
+    <code>BRC-AEP</code> van separadas porque el avión carga donde despega y pueden
+    tener proveedores opuestos.
+    <br>Las que salen con <b>sin resolver</b> y <code>ruta_no_declarada</code> son las
+    que le faltan a la planilla: arriba están las que más cuestan completar.
+  </p>
+  <a href="/quien-cargo-rutas.csv" download>
+    <button type="button">Distribución de rutas (.csv)</button>
+  </a>
+  <a href="/quien-cargo.csv" download style="margin-left:6px;">
+    <button type="button">Detalle por vuelo (.csv)</button>
+  </a>
+</div>
+
 {% if nivel and nivel >= 2 %}
 {# La carga de la planilla es de nivel 2 y no 1: leer la tabla es una cosa, CAMBIARLA es
    otra. Esta tabla decide de qué petrolera es cada ruta en todo el mapa, así que una
@@ -294,8 +317,6 @@ function pintar(d) {
     document.body.insertBefore(av, document.body.firstChild);
     return;
   }
-  const ahora = d.ahora_epoch;
-
   const ahora = d.ahora_epoch;
 
   // ---- la banda de estado. La version ruidosa es la que avisa.

@@ -1052,7 +1052,19 @@ def _quien_cargo_plano(tablero, resumen, sondeo, tabla_desde):
         d.update(tablero)
         d['sin_base'] = False
     d['n_vuelos_total'] = d.get('total', 0)
-    d['sondeo'] = sondeo
+    # TRADUCCION DEL ESTADO DEL POLLER, y no es cosmetica. La pantalla viene del radar y
+    # espera `activo`; el poller de aca expone `corriendo`. Sin traducirlo, `s.activo`
+    # queda undefined, la pantalla cae en el branch de "apagado" y muestra
+    # "Sondeo apagado (--sin-sondeo)" -- una bandera que en el web NO EXISTE -- mientras
+    # el poller esta sondeando cada 5 minutos. Un cartel que dice lo contrario de lo que
+    # pasa es peor que ningun cartel: manda a arreglar algo que no esta roto.
+    est = dict(sondeo or {})
+    est['activo'] = bool(est.get('corriendo'))
+    # `ultimo_ok` lo usa la pantalla para decir "lo de abajo es lo que habia hace tanto"
+    # cuando la ultima vuelta fallo. Si nunca fallo, es el ultimo sondeo.
+    est.setdefault('ultimo_ok', est.get('ultimo'))
+    est.setdefault('intervalo_s', 300)
+    d['sondeo'] = est
     d['ahora_epoch'] = time.time()
     d['tabla_desde'] = tabla_desde
     return d
@@ -1127,6 +1139,114 @@ def _token_export_ok():
     dado = (request.args.get('token') or
             request.headers.get('X-Export-Token') or '')
     return bool(dado) and hmac.compare_digest(dado, esperado)
+
+
+def _csv_respuesta(nombre, encabezados, filas):
+    """CSV que Excel abre bien en castellano, sin pasos intermedios.
+
+    Dos cosas que parecen manias y no lo son:
+
+      - **BOM al principio** (`utf-8-sig`): sin el, Excel en Windows lee el archivo como
+        ANSI y "Neuquén" sale "NeuquÃ©n". No es un detalle estetico: quien abre esto
+        pega la tabla en un informe.
+      - **Punto y coma como separador**, no coma: en la configuracion regional de aca el
+        separador de listas es `;`, y con `,` Excel mete la fila entera en una celda.
+    """
+    import csv
+    import io as _io
+    buf = _io.StringIO()
+    w = csv.writer(buf, delimiter=';', lineterminator=chr(13) + chr(10))
+    w.writerow(encabezados)
+    w.writerows(filas)
+    resp = make_response(chr(0xFEFF) + buf.getvalue())
+    resp.headers['Content-Type'] = 'text/csv; charset=utf-8'
+    resp.headers['Content-Disposition'] = 'attachment; filename=%s' % nombre
+    return resp
+
+
+@app.route('/quien-cargo.csv')
+@requiere_nivel(1)
+def quien_cargo_csv():
+    """El detalle de partidas, una fila por vuelo.
+
+    La pantalla ya lo enlazaba -- el pie de la lista dice "el detalle completo va en
+    quien-cargo.csv" -- pero el endpoint no existia: el link daba 404. Es una ruta que el
+    radar sirve y que se me paso al traer la pantalla.
+    """
+    if quien_cargo is None or msrtic is None:
+        return jsonify({'error': 'modulo no disponible: %s' % MSRTIC_ERROR}), 503
+    try:
+        horas = request.args.get('horas', '')
+        horas = None if horas in ('', 'todo') else float(horas)
+    except ValueError:
+        horas = None
+    origen = (request.args.get('origen') or '').strip().upper() or None
+    tabla = proveedores.cargar_tabla(msrtic.tabla_proveedores())
+    t = quien_cargo.tablero(msrtic.base_oficial(), horas, origen, tabla)
+    if not t:
+        return jsonify({'error': 'todavia no hay partidas'}), 409
+    filas = []
+    for v in t['vuelos']:
+        filas.append([
+            v.get('programada_txt') or v.get('programada') or '',
+            v.get('real_txt') or v.get('real') or '',
+            v.get('numero') or '', v.get('aerolinea') or '',
+            v.get('origen') or '', v.get('destino') or '',
+            v.get('destino_nombre') or '',
+            v.get('proveedor') or 'sin resolver',
+            v.get('motivo') or '',
+            'si' if v.get('ocurrio') else 'no',
+            v.get('estado') or '', v.get('matricula') or '',
+        ])
+    return _csv_respuesta('quien-cargo.csv',
+                          ['Programada', 'Despego', 'Vuelo', 'Aerolinea', 'Origen',
+                           'Destino', 'Destino nombre', 'Proveedor', 'Por que',
+                           'Despego?', 'Estado', 'Matricula'],
+                          filas)
+
+
+@app.route('/quien-cargo-rutas.csv')
+@requiere_nivel(1)
+def quien_cargo_rutas_csv():
+    """La DISTRIBUCION DE RUTAS: una fila por ruta dirigida, con su proveedor.
+
+    Es la vista que sirve para trabajar la planilla: dice cuantas partidas vale cada ruta
+    y quien la abastece, ordenada por volumen. Las que salen con proveedor vacio y motivo
+    `ruta_no_declarada` son exactamente las que hay que completar, y estan arriba las que
+    mas cuestan.
+
+    Va por RUTA DIRIGIDA porque asi esta armada la planilla: AEP-BRC y BRC-AEP son dos
+    filas distintas y pueden tener proveedores opuestos -- el avion carga donde despega.
+    """
+    if quien_cargo is None or msrtic is None:
+        return jsonify({'error': 'modulo no disponible: %s' % MSRTIC_ERROR}), 503
+    try:
+        horas = request.args.get('horas', '')
+        horas = None if horas in ('', 'todo') else float(horas)
+    except ValueError:
+        horas = None
+    tabla = proveedores.cargar_tabla(msrtic.tabla_proveedores())
+    r = quien_cargo.desde_base(msrtic.base_oficial(), horas, tabla=tabla)
+    if not r:
+        return jsonify({'error': 'todavia no hay partidas'}), 409
+    total = r.get('total') or 0
+    filas = []
+    for d in r.get('por_ruta') or []:
+        n = d.get('vuelos') or 0
+        filas.append([
+            d.get('ruta') or '', d.get('origen') or '', d.get('destino') or '',
+            d.get('destino_nombre') or '',
+            d.get('proveedor') or 'sin resolver',
+            d.get('motivo') or '',
+            n,
+            # El porcentaje sobre el MISMO denominador que la pantalla: las despegadas.
+            ('%.1f' % (100.0 * n / total)).replace('.', ',') if total else '',
+            ' '.join(d.get('aerolineas') or []),
+        ])
+    return _csv_respuesta('distribucion-rutas.csv',
+                          ['Ruta', 'Origen', 'Destino', 'Destino nombre', 'Proveedor',
+                           'Por que', 'Partidas', '% del total', 'Aerolineas'],
+                          filas)
 
 
 @app.route('/api/msrtic/export.xlsx')
