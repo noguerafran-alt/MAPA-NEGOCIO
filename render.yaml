@@ -1,6 +1,10 @@
 services:
   - type: web
-    name: rutas-aereas-argentina
+    # El servicio real se llama MAPA-NEGOCIO (srv-d9qehnfqj5pc7389nq2g). Estaba escrito
+    # "rutas-aereas-argentina", que es el nombre de OTRO servicio del workspace: aplicar
+    # este blueprint asi habria creado un servicio NUEVO en vez de tomar el que corre, y
+    # el que corre tiene el disco con el acumulado del poller.
+    name: MAPA-NEGOCIO
     runtime: python
     plan: starter
     disk:
@@ -24,6 +28,19 @@ services:
       - key: GOOGLE_CLIENT_SECRET
         sync: false
       - key: SECRET_KEY
+        generateValue: true
+      # Token para bajar /api/msrtic/export.xlsx SIN sesion, que es lo que necesita
+      # bajar_ms.py: un script no puede hacer el OAuth de Google. Va generado por Render
+      # y no escrito aca -- un secreto en el repo es un secreto publicado.
+      #
+      # OJO: hoy este servicio NO se administra con este blueprint (se creo a mano, de
+      # ahi que el nombre no coincidiera), asi que esta linea no lo configura sola. Hay
+      # que ponerla en Environment del servicio. Queda declarada para que un servicio
+      # creado desde el blueprint la tenga desde el arranque.
+      #
+      # Si falta o tiene menos de 20 caracteres, el endpoint solo acepta sesion de
+      # nivel 1: el bypass esta apagado por defecto a proposito.
+      - key: MS_EXPORT_TOKEN
         generateValue: true
       - key: RENDER_DISK_PATH
         value: /var/data
