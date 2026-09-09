@@ -74,6 +74,34 @@
   /* El proveedor va con color Y con texto. El color solo no alcanza: son varias
      categorias y una es "no se sabe", que es justo la que no se puede confundir
      con las otras. */
+  /* ---- tabla por ruta, editable ---- */
+  tr.ruta-fila { cursor: pointer; }
+  tr.ruta-fila:hover { background: rgba(76,124,240,0.07); }
+  tr.ruta-fila.abierta { background: rgba(76,124,240,0.10); }
+  td.flecha { width: 18px; color: #6b7280; text-align: center; user-select: none; }
+  /* Las filas de aerolinea se leen como parte de la ruta de arriba, no como filas
+     sueltas: fondo hundido y el borde izquierdo que las ata a su ruta. */
+  tr.fila-aero > td { background: rgba(0,0,0,0.22); font-size: .82rem; padding-top: 4px;
+                      padding-bottom: 4px; }
+  tr.fila-aero > td:first-child { border-left: 2px solid #4c7cf0; }
+  .ayuda-aero { color: #6b7280; font-size: .74rem; font-style: italic; }
+  /* El selector NO parece un control hasta que se lo toca: en reposo se lee como el
+     texto que reemplaza. Una tabla con 179 combos gritando es ilegible, y lo que
+     importa es el dato, no que se pueda editar. */
+  select.sel-prov {
+    background: transparent; color: inherit; border: 1px solid transparent;
+    border-radius: 8px; padding: 2px 6px; font: inherit; font-size: .78rem;
+    cursor: pointer; max-width: 130px;
+  }
+  select.sel-prov:hover, select.sel-prov:focus {
+    border-color: #2a3358; background: #0f1830; outline: none;
+  }
+  select.sel-prov:disabled { opacity: .5; cursor: progress; }
+  select.sel-prov.chico { font-size: .76rem; }
+  /* "mixta": la ruta no tiene UN proveedor. Sin esto la fila muestra el de la
+     mayoria como si valiera para todas, que es mentir por omision. */
+  .mixta { margin-left: 6px; font-size: .68rem; color: #ffd9a0; border: 1px solid #6b551f;
+           border-radius: 6px; padding: 1px 5px; vertical-align: middle; }
   .chip { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: .76rem; }
   .chip.ypf   { background: #14532d; color: #86efac; }
   .chip.p1    { background: #3a1b1b; color: #fecaca; }
@@ -311,6 +339,136 @@ function chip(prov) {
   return `<span class="chip ${clase(prov)}">${esc(prov) || "sin resolver"}</span>`;
 }
 
+/* LA TABLA POR RUTA ES EDITABLE, y por eso no usa el `tabla()` generico.
+   Tiene tres cosas que aquel no sabe hacer y que no vale la pena meterle:
+   se abre para mostrar quien vuela cada ruta, cada fila tiene un selector que
+   escribe en la planilla, y la fila de la ruta se marca cuando sus aerolineas
+   no coinciden.
+
+   POR QUE SE PUEDE EDITAR ACA. La planilla llega de a tandas y la correccion
+   aparece de a una: alguien mira esta pantalla, reconoce que esa ruta la
+   abastece otro, y hasta ahora la unica forma de arreglarlo era editar el
+   .xlsx, reconvertirlo y volver a subirlo -- o sea, no se hacia. */
+
+// Que rutas quedaron abiertas. Sobrevive al refresco de los 60 s: si se cerraran
+// solas, editar una aerolinea seria imposible en la practica.
+const rutasAbiertas = new Set();
+
+/* NIVEL 2 PARA EDITAR, igual que subir la planilla: leer la tabla es una cosa y
+   cambiarla es otra -- decide de que petrolera es cada ruta en todo el mapa. El
+   backend lo exige igual; esto es para no ofrecer un control que va a dar 403. */
+const PUEDE_EDITAR = {{ 'true' if nivel and nivel >= 2 else 'false' }};
+
+function opcionesProveedor(actual, d) {
+  // Los proveedores que EXISTEN en los datos, no una lista fija: si manana
+  // aparece uno nuevo en la planilla, esta ahi sin tocar codigo.
+  const vistos = new Set(Object.keys(d.por_proveedor || {}));
+  (d.por_ruta || []).forEach((r) => {
+    if (r.proveedor) vistos.add(r.proveedor);
+    (r.por_aerolinea || []).forEach((a) => { if (a.proveedor) vistos.add(a.proveedor); });
+  });
+  if (actual) vistos.add(actual);
+  const act = (actual || "").toUpperCase();
+  // "sin declarar" primero y vacio a proposito: es el estado inicial de todo y
+  // tiene que poder elegirse para BORRAR una declaracion. Una ruta sin declarar
+  // se cuenta como hueco y se muestra; no es lo mismo que decir "no se sabe".
+  return ['<option value="">sin declarar</option>'].concat(
+    [...vistos].sort().map((p) =>
+      `<option value="${esc(p)}"${p.toUpperCase() === act ? " selected" : ""}>${esc(p)}</option>`)
+  ).join("");
+}
+
+async function guardarProveedor(el, ruta, aerolinea) {
+  const antes = el.dataset.antes || "";
+  el.disabled = true;
+  try {
+    const r = await fetch("/api/quien-cargo/proveedor", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ruta, aerolinea: aerolinea || null, proveedor: el.value }),
+    });
+    const j = await r.json();
+    if (!r.ok || j.error) throw new Error(j.error || ("HTTP " + r.status));
+    // Se vuelve a pedir todo en vez de parchear la fila: el cambio mueve los
+    // porcentajes, las tarjetas y el vuelo-por-vuelo. Parchear solo la fila
+    // dejaria la pantalla mostrando un total que ya no corresponde.
+    await refrescar();
+  } catch (e) {
+    // Se vuelve al valor anterior: dejar el select en lo que el usuario eligio
+    // despues de que la escritura fallo es la peor mentira posible acá.
+    el.value = antes;
+    el.disabled = false;
+    alert("No se pudo guardar: " + e.message);
+  }
+}
+
+function tablaRutas(el, filas, d) {
+  if (!filas.length) {
+    el.innerHTML = `<tr><td class="empty">nada todavía</td></tr>`;
+    return;
+  }
+  const cabecera = ["", "Ruta", "Destino", "Proveedor", "Por qué", "Partidas", "La volaron"]
+    .map((t, i) => `<th class="${i === 5 ? "num" : ""}">${t}</th>`).join("");
+
+  const cuerpo = filas.map((f) => {
+    const abierta = rutasAbiertas.has(f.ruta);
+    const aeros = f.por_aerolinea || [];
+    // El interior no se declara en la planilla -- es YPF por la regla de negocio --
+    // asi que ahi no se ofrece editar: un selector que el backend va a rechazar es
+    // peor que ninguno.
+    const editable = PUEDE_EDITAR &&
+                     ["AEP", "EZE", "COR"].includes((f.origen || "").toUpperCase());
+    const filaRuta = `
+      <tr class="ruta-fila${abierta ? " abierta" : ""}" data-ruta="${esc(f.ruta)}">
+        <td class="flecha">${aeros.length ? (abierta ? "▾" : "▸") : ""}</td>
+        <td><span class="ruta cod">${esc(f.ruta)}</span></td>
+        <td>${esc(f.destino_nombre) || '<span class="muted">-</span>'}</td>
+        <td>${editable
+              ? `<select class="sel-prov" data-antes="${esc(f.proveedor || "")}"
+                    onclick="event.stopPropagation()"
+                    onchange="guardarProveedor(this, '${esc(f.ruta)}', null)">
+                   ${opcionesProveedor(f.proveedor, d)}
+                 </select>`
+              : chip(f.proveedor)}
+            ${f.mixta ? '<span class="mixta" title="Alguna aerolínea de esta ruta tiene otro proveedor">mixta</span>' : ""}</td>
+        <td><span class="motivo">${esc(f.motivo)}</span></td>
+        <td class="num">${f.vuelos}</td>
+        <td>${esc((f.aerolineas || []).join(" ")) || '<span class="muted">-</span>'}</td>
+      </tr>`;
+    if (!abierta || !aeros.length) return filaRuta;
+    const hijas = aeros.map((a) => `
+      <tr class="fila-aero">
+        <td></td>
+        <td class="num">${a.vuelos}</td>
+        <td colspan="1"><span class="cod">${esc(a.aerolinea_id)}</span>
+            <span class="muted">${esc(a.aerolinea) || ""}</span></td>
+        <td>${editable
+              ? `<select class="sel-prov chico" data-antes="${esc(a.proveedor || "")}"
+                    onchange="guardarProveedor(this, '${esc(f.ruta)}', '${esc(a.aerolinea_id)}')">
+                   ${opcionesProveedor(a.proveedor, d)}
+                 </select>`
+              : chip(a.proveedor)}</td>
+        <td><span class="motivo">${esc(a.motivo)}</span></td>
+        <td colspan="2" class="ayuda-aero">${a.motivo === "planilla_aerolinea"
+              ? "declarada aparte para esta aerolínea"
+              : "hereda el proveedor de la ruta"}</td>
+      </tr>`).join("");
+    return filaRuta + hijas;
+  }).join("");
+
+  el.innerHTML = `<thead><tr>${cabecera}</tr></thead><tbody>${cuerpo}</tbody>`;
+
+  // Abrir/cerrar. Delegado sobre la fila y no en un onclick por celda para que
+  // el click en el selector no despliegue la ruta (por eso el stopPropagation).
+  el.querySelectorAll("tr.ruta-fila").forEach((tr) => {
+    tr.addEventListener("click", () => {
+      const r = tr.dataset.ruta;
+      if (rutasAbiertas.has(r)) rutasAbiertas.delete(r); else rutasAbiertas.add(r);
+      tablaRutas(el, filas, d);
+    });
+  });
+}
+
 function pintar(d) {
   const total = d.total || 0;
 
@@ -445,15 +603,8 @@ function pintar(d) {
   ], provs);
 
   // ---- por ruta
-  tabla(document.getElementById("t-rutas"), [
-    { t: "Ruta", v: (f) => `<span class="ruta cod">${esc(f.ruta)}</span>` },
-    { t: "Destino", v: (f) => esc(f.destino_nombre) || '<span class="muted">-</span>' },
-    { t: "Proveedor", v: (f) => chip(f.proveedor) },
-    { t: "Por qué", v: (f) => `<span class="motivo">${esc(f.motivo)}</span>` },
-    { t: "Partidas", num: true, v: (f) => f.vuelos },
-    { t: "La volaron", v: (f) => esc((f.aerolineas || []).join(" ")) ||
-                                 '<span class="muted">-</span>' },
-  ], d.por_ruta || []);
+  // ---- por ruta (editable: ver tablaRutas)
+  tablaRutas(document.getElementById("t-rutas"), d.por_ruta || [], d);
 
   // ---- rutas que faltan
   tabla(document.getElementById("t-faltan"), [

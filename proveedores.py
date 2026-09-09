@@ -49,8 +49,8 @@ def cargar_tabla(ruta: Path | str = TABLA_PATH) -> dict:
     mostrarse como "falta el dato" en vez de romper la pagina.
     """
     ruta = Path(ruta)
-    vacia = {"existe": False, "rutas": {}, "actualizado": None,
-             "fuente": None, "error": None}
+    vacia = {"existe": False, "rutas": {}, "por_aerolinea": {},
+             "actualizado": None, "fuente": None, "error": None}
     if not ruta.exists():
         return vacia
     try:
@@ -69,17 +69,46 @@ def cargar_tabla(ruta: Path | str = TABLA_PATH) -> dict:
         o, _, dst = str(k).partition("-")
         if _iata(o) and _iata(dst) and _iata(v):
             rutas[(_iata(o), _iata(dst))] = _iata(v)
-    return {"existe": True, "rutas": rutas, "error": None,
+    # EXCEPCIONES POR AEROLINEA. La regla general sigue siendo que el proveedor es
+    # de la RUTA -- la planilla de YPF no trae columna de aerolinea y su llave es
+    # (PARTIDA, ARRIBO). Pero en Ezeiza aparecieron rutas donde una compania no la
+    # abastece la misma petrolera que al resto: EZE-MAD la vuelan AR, IB, PU y UX, y
+    # no tienen por que compartir contrato. Eso NO se puede expresar con una tabla
+    # por ruta, y forzarlo obliga a elegir entre mentir sobre una aerolinea o dejar
+    # la ruta entera sin declarar.
+    #
+    # Se modela como EXCEPCION y no como tabla paralela a proposito: la ruta sigue
+    # teniendo su proveedor, y esto solo dice quien se aparta. Asi lo declarado sigue
+    # siendo poco y cada excepcion es una afirmacion explicita de alguien, en vez de
+    # 253 casillas que hay que mantener llenas.
+    por_aerolinea = {}
+    for k, v in (d.get("por_aerolinea") or {}).items():
+        if "-" not in str(k) or not isinstance(v, dict):
+            continue
+        o, _, dst = str(k).partition("-")
+        if not (_iata(o) and _iata(dst)):
+            continue
+        for aero, prov in v.items():
+            if _iata(aero) and _iata(prov):
+                por_aerolinea[(_iata(o), _iata(dst), _iata(aero))] = _iata(prov)
+    return {"existe": True, "rutas": rutas, "por_aerolinea": por_aerolinea,
+            "error": None,
             "actualizado": d.get("actualizado"), "fuente": d.get("fuente")}
 
 
-def quien_cargo(origen, destino, tabla: dict) -> dict:
+def quien_cargo(origen, destino, tabla: dict, aerolinea=None) -> dict:
     """Quien abastecio esa partida: {proveedor, motivo}.
 
     `proveedor` es None cuando no se puede afirmar, y `motivo` dice por que.
     Se devuelven los dos juntos a proposito: un proveedor sin el motivo deja
     indistinguible "YPF porque es el interior" de "YPF porque lo dice la
     planilla", y son dos niveles de evidencia distintos.
+
+    `aerolinea` es OPCIONAL y solo cambia algo si alguien declaro una excepcion
+    para ese par (ruta, aerolinea). Es opcional y no obligatorio porque los
+    llamadores viejos -- el market share del mapa, que agrega por ruta -- no
+    tienen la aerolinea a mano, y ahi la respuesta correcta sigue siendo la de la
+    ruta. Pasarla nunca empeora la respuesta: como mucho, la precisa.
     """
     o, dst = _iata(origen), _iata(destino)
     if not o:
@@ -93,6 +122,15 @@ def quien_cargo(origen, destino, tabla: dict) -> dict:
         return {"proveedor": "YPF", "motivo": "interior"}
     if not tabla.get("existe"):
         return {"proveedor": None, "motivo": "sin_planilla"}
+    # La excepcion gana sobre la ruta: es mas especifica y la puso alguien a mano
+    # sabiendo que esa compania se aparta. Motivo propio para que la pantalla pueda
+    # distinguirla -- "YPF porque lo dice la ruta" y "Axion porque alguien declaro
+    # que esta aerolinea no" son evidencias distintas, igual que interior y planilla.
+    a = _iata(aerolinea)
+    if a:
+        p = (tabla.get("por_aerolinea") or {}).get((o, dst, a))
+        if p:
+            return {"proveedor": p, "motivo": "planilla_aerolinea"}
     p = tabla["rutas"].get((o, dst))
     if p:
         return {"proveedor": p, "motivo": "planilla"}

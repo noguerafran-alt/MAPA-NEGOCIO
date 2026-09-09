@@ -1497,6 +1497,102 @@ def api_quien_cargo_planilla():
             pass
 
 
+@app.route('/api/quien-cargo/proveedor', methods=['POST'])
+@requiere_nivel(2)
+def api_quien_cargo_proveedor():
+    """Cambia el proveedor de UNA ruta, o de una aerolinea dentro de la ruta.
+
+    NIVEL 2, igual que subir la planilla y por lo mismo: leer la tabla es una cosa y
+    cambiarla es otra. Esta tabla decide de que petrolera es cada ruta en TODO el mapa,
+    asi que una correccion equivocada mueve numeros en pantallas que nadie esta mirando.
+
+    DOS ALCANCES, y la diferencia importa:
+
+      sin `aerolinea`   cambia el proveedor de la RUTA. Vale para todas las companias
+                        que la vuelen, que es el caso normal y la regla del negocio.
+      con `aerolinea`   declara una EXCEPCION: esa compania no la abastece quien
+                        abastece al resto de la ruta. Se guarda aparte, en
+                        `por_aerolinea`, para que la ruta siga teniendo su proveedor y
+                        la excepcion sea una afirmacion explicita y no un dato mas.
+
+    `proveedor` vacio BORRA la declaracion en vez de guardar un vacio: es la unica forma
+    de volver atras, y una ruta sin declarar no es lo mismo que una declarada "sin
+    resolver" -- la primera se cuenta como hueco y se muestra.
+
+    SE ESCRIBE EN EL DISCO (`tabla_proveedores_destino`), nunca al lado del codigo: el
+    filesystem de Render es efimero y el proximo deploy borraria la correccion,
+    volviendo sola a la semilla del repo sin que nadie se entere.
+    """
+    if msrtic is None:
+        return jsonify({'error': 'modulo no disponible: %s' % MSRTIC_ERROR}), 503
+    d = request.get_json(silent=True) or {}
+    ruta = str(d.get('ruta') or '').strip().upper()
+    aerolinea = str(d.get('aerolinea') or '').strip().upper()
+    proveedor = str(d.get('proveedor') or '').strip()
+
+    if '-' not in ruta:
+        return jsonify({'error': 'ruta invalida: se espera "EZE-MAD"'}), 400
+    origen, _, destino = ruta.partition('-')
+    if len(origen) != 3 or len(destino) != 3:
+        return jsonify({'error': 'ruta invalida: los IATA son de 3 letras'}), 400
+    # El interior no se declara: es YPF por la regla de negocio, y una declaracion ahi
+    # le ganaria a la regla. Se rechaza en vez de guardar algo que no hace nada, que
+    # seria peor: el usuario ve "guardado" y la pantalla no cambia.
+    if origen not in ('AEP', 'EZE', 'COR'):
+        return jsonify({'error': 'Fuera de AEP, EZE y COR no hay competencia: esas '
+                                 'partidas son de YPF por la regla de negocio y no se '
+                                 'declaran en la planilla.'}), 400
+
+    from pathlib import Path
+    # Se LEE la vigente (que puede ser la semilla del repo) y se ESCRIBE en el disco.
+    # Si se leyera el destino, la primera correccion sobre una instancia recien
+    # desplegada partiria de una tabla vacia y borraria las 157 rutas de la semilla.
+    origen_json = Path(msrtic.tabla_proveedores())
+    destino_json = Path(msrtic.tabla_proveedores_destino())
+    try:
+        actual = json.loads(origen_json.read_text(encoding='utf-8'))             if origen_json.exists() else {}
+    except (OSError, ValueError) as e:
+        return jsonify({'error': 'no se pudo leer la planilla: %s' % e}), 500
+    actual.setdefault('rutas', {})
+    actual.setdefault('por_aerolinea', {})
+
+    if aerolinea:
+        porc = actual['por_aerolinea'].setdefault(ruta, {})
+        if proveedor:
+            porc[aerolinea] = proveedor
+        else:
+            porc.pop(aerolinea, None)
+        if not porc:
+            actual['por_aerolinea'].pop(ruta, None)
+        que = 'excepcion %s en %s' % (aerolinea, ruta)
+    else:
+        if proveedor:
+            actual['rutas'][ruta] = proveedor
+        else:
+            actual['rutas'].pop(ruta, None)
+        que = 'ruta %s' % ruta
+
+    actual['actualizado'] = datetime.now().date().isoformat()
+    actual['fuente'] = ('editada a mano desde /quien-cargo por %s (ultimo cambio: %s)'
+                        % (session.get('user_email', '?'), que))
+    try:
+        destino_json.parent.mkdir(parents=True, exist_ok=True)
+        destino_json.write_text(
+            json.dumps(actual, ensure_ascii=False, indent=2) + chr(10),
+            encoding='utf-8')
+    except OSError as e:
+        return jsonify({'error': 'no se pudo escribir la planilla: %s' % e}), 500
+
+    # El cache tiene las filas ya clasificadas con la tabla vieja: sin esto se guarda
+    # bien y la pantalla sigue mostrando lo de antes.
+    msrtic._cache['clave'] = None
+    return jsonify({'ok': True, 'que': que,
+                    'proveedor': proveedor or None,
+                    'rutas': len(actual['rutas']),
+                    'excepciones': sum(len(v) for v in actual['por_aerolinea'].values()),
+                    'destino': str(destino_json)})
+
+
 @app.route('/api/msrtic')
 @limiter.limit("30 per minute")
 def api_msrtic():
