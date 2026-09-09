@@ -1,0 +1,22 @@
+Logos de las petroleras, servidos desde aca y NUNCA desde internet (regla 2: la PC donde
+corre el mapa puede no tener red, y un logo traido de un CDN desaparece justo donde el
+mapa tiene que andar igual).
+
+Los nombres los decide LOGO_PROVEEDOR en templates/quien_cargo.html:
+
+    ypf.svg      YPF
+    shell.svg    Raizen  <-- la planilla la nombra "Raizen", que es la operadora, pero la
+                             marca en la pista es SHELL y es la que reconoce quien mira
+                             el mapa. Mismo archivo, otro nombre.
+    axion.svg    Axion
+
+SON DIBUJOS PROPIOS, NO LOS ARCHIVOS OFICIALES. Se hicieron a mano el 2026-09-09 porque
+no habia forma de meter los oficiales al repo en ese momento. Son aproximaciones
+reconocibles: si aparecen los originales, se reemplazan estos archivos por los buenos y
+no hay que tocar codigo -- mientras conserven el nombre y sigan siendo .svg.
+
+Van en SVG y no en PNG: pesan nada, escalan sin pixelarse (se dibujan a 13px en el chip
+y podrian ir mas grandes en un panel) y son texto, asi que un cambio se ve en el diff.
+
+MIENTRAS UN ARCHIVO NO ESTE, NO SE ROMPE NADA: el <img> tiene un onerror que lo saca de
+la pagina, asi que el chip queda con su color y su texto, como estaba antes.

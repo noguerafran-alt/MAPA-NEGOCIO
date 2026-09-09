@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 44" role="img" aria-label="YPF">
+  <!-- Marca denominativa. Se dibuja con trazos y no con <text> a proposito: una fuente
+       que no este instalada en la PC del kiosco cambiaria la marca por otra tipografia
+       cualquiera, y eso se ve peor que no tener logo. -->
+  <g fill="#2360A5">
+    <path d="M4 6h13l9 15 9-15h13L34 27v11H22V27L4 6z"/>
+    <path d="M52 6h22c9 0 15 5 15 13s-6 13-15 13h-10v6H52V6zm12 9v8h8c3 0 5-1 5-4s-2-4-5-4h-8z"/>
+    <path d="M94 6h24v9h-12v5h11v9h-11v9H94V6z"/>
+  </g>
+</svg>

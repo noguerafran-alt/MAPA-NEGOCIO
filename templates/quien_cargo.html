@@ -121,7 +121,13 @@
      mayoria como si valiera para todas, que es mentir por omision. */
   .mixta { margin-left: 6px; font-size: .68rem; color: #ffd9a0; border: 1px solid #6b551f;
            border-radius: 6px; padding: 1px 5px; vertical-align: middle; }
-  .chip { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: .76rem; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px;
+           border-radius: 10px; font-size: .76rem; }
+  /* Alto fijo y ancho libre: los tres logos tienen proporciones muy distintas -- el de
+     YPF es una palabra apaisada y el de Axion un circulo -- y forzar un cuadrado los
+     deformaria. `object-fit: contain` los deja respirar dentro del alto del chip. */
+  .logo-prov { height: 13px; width: auto; max-width: 34px; object-fit: contain;
+               vertical-align: middle; }
   .chip.ypf   { background: #14532d; color: #86efac; }
   .chip.p1    { background: #3a1b1b; color: #fecaca; }
   .chip.p2    { background: #2c2540; color: #c4b5fd; }
@@ -264,8 +270,32 @@ function tabla(el, cols, filas) {
   el.innerHTML = `<thead><tr>${th}</tr></thead><tbody>${tr}</tbody>`;
 }
 
+/* EL ARCHIVO DE LOGO DE CADA PETROLERA. El nombre sale del proveedor y no de un mapa
+   fijo, salvo Raizen: la planilla la nombra "Raizen" -- que es la operadora -- y la
+   marca en la pista es SHELL. Son la misma empresa y el que mira el mapa reconoce el
+   segundo nombre, no el primero.
+
+   VIVEN EN static/ Y NO SALEN DE INTERNET: es la regla 2, y ademas un logo traido de un
+   CDN desaparece el dia que la PC del kiosco no tenga red -- justo donde este mapa tiene
+   que andar igual. */
+const LOGO_PROVEEDOR = { YPF: 'ypf', RAIZEN: 'shell', AXION: 'axion' };
+
+function logoProveedor(prov) {
+  const f = LOGO_PROVEEDOR[(prov || '').toUpperCase()];
+  if (!f) return '';
+  // onerror se saca a si mismo: mientras el archivo no este, el chip queda como estaba
+  // -- con su color y su texto -- en vez de mostrar el icono roto del navegador. Asi
+  // esto se puede mergear antes de tener los archivos.
+  return `<img class="logo-prov" src="/static/logos/${f}.svg" alt="${esc(prov)}"
+               onerror="this.remove()">`;
+}
+
 function chip(prov) {
-  return `<span class="chip ${clase(prov)}">${esc(prov) || "sin resolver"}</span>`;
+  // El logo NO reemplaza al texto: un chip que solo muestra una imagen deja de ser
+  // legible si el archivo falta, si el usuario tiene las imagenes apagadas, o si alguien
+  // copia la tabla a un mail. El nombre es el dato; el logo lo acompania.
+  return `<span class="chip ${clase(prov)}">${logoProveedor(prov)}`
+       + `${esc(prov) || "sin resolver"}</span>`;
 }
 
 /* LA TABLA POR RUTA ES EDITABLE, y por eso no usa el `tabla()` generico.

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 72 64" role="img" aria-label="Shell">
+  <!-- La pecten. Las costillas ABREN EN ABANICO desde el vertice de abajo, no son
+       verticales: es lo que hace que se lea como una venera y no como una cupula. -->
+  <path d="M36 2C17 2 2 17 2 36c0 7 2 13 5 19l3 7h11l1-7h28l1 7h11l3-7c3-6 5-12 5-19C70 17 55 2 36 2z"
+        fill="#ED1C24"/>
+  <path d="M36 10C21 10 9 22 9 37c0 6 1 11 4 16l2 5h42l2-5c3-5 4-10 4-16 0-15-12-27-27-27z"
+        fill="#FBCE07"/>
+  <g stroke="#ED1C24" stroke-width="2.6" stroke-linecap="round" fill="none">
+    <path d="M36 58V13"/>
+    <path d="M36 58 26 14"/><path d="M36 58 46 14"/>
+    <path d="M36 58 17 19"/><path d="M36 58 55 19"/>
+    <path d="M36 58 11 29"/><path d="M36 58 61 29"/>
+  </g>
+</svg>
