@@ -286,7 +286,11 @@ function tabla(el, cols, filas) {
    VIVEN EN static/ Y NO SALEN DE INTERNET: es la regla 2, y ademas un logo traido de un
    CDN desaparece el dia que la PC del kiosco no tenga red -- justo donde este mapa tiene
    que andar igual. */
-const LOGO_PROVEEDOR = { YPF: 'ypf', RAIZEN: 'shell', AXION: 'axion' };
+/* EL NOMBRE COMPLETO DEL ARCHIVO, con extension. Conviven .png y .svg: los oficiales
+   que aporto YPF son PNG y los que faltaban se dibujaron en SVG. Guardar solo el nombre
+   y pegarle una extension fija obligaria a convertir archivos para que entren, que es
+   trabajo por una decision del codigo. */
+const LOGO_PROVEEDOR = { YPF: 'ypf.png', RAIZEN: 'shell.png', AXION: 'axion.png' };
 
 function logoProveedor(prov) {
   const f = LOGO_PROVEEDOR[(prov || '').toUpperCase()];
@@ -294,7 +298,7 @@ function logoProveedor(prov) {
   // onerror se saca a si mismo: mientras el archivo no este, el chip queda como estaba
   // -- con su color y su texto -- en vez de mostrar el icono roto del navegador. Asi
   // esto se puede mergear antes de tener los archivos.
-  return `<img class="logo-prov" src="/static/logos/${f}.svg" alt="${esc(prov)}"
+  return `<img class="logo-prov" src="/static/logos/${f}" alt="${esc(prov)}"
                onerror="this.remove()">`;
 }
 
@@ -307,13 +311,14 @@ function logoProveedor(prov) {
    alcanza con dejar el .svg en static/logos/ y sumar el codigo a este set. Si el codigo
    no esta aca no se pide el archivo, para no generar un 404 por cada fila de una
    aerolinea sin logo. */
-const LOGO_AEROLINEA = new Set(['AR', 'WJ', 'H2', 'G3', 'LA', 'JJ']);
+const LOGO_AEROLINEA = { AR: 'ar.png', WJ: 'wj.png',
+                         H2: 'h2.svg', G3: 'g3.svg', LA: 'la.svg', JJ: 'jj.svg' };
 
 function logoAerolinea(id) {
-  const c = (id || '').trim().toUpperCase();
-  if (!LOGO_AEROLINEA.has(c)) return '';
-  return `<img class="logo-aero" src="/static/logos/${c.toLowerCase()}.svg"`
-       + ` alt="${esc(c)}" onerror="this.remove()">`;
+  const f = LOGO_AEROLINEA[(id || '').trim().toUpperCase()];
+  if (!f) return '';
+  return `<img class="logo-aero" src="/static/logos/${f}"`
+       + ` alt="${esc(id)}" onerror="this.remove()">`;
 }
 
 function chip(prov) {

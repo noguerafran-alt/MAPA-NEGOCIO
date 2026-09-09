@@ -1,22 +1,38 @@
-Logos de las petroleras, servidos desde aca y NUNCA desde internet (regla 2: la PC donde
-corre el mapa puede no tener red, y un logo traido de un CDN desaparece justo donde el
-mapa tiene que andar igual).
+Logos, servidos desde aca y NUNCA desde internet (regla 2: la PC donde corre el mapa
+puede no tener red, y un logo traido de un CDN desaparece justo donde el mapa tiene que
+andar igual).
 
-Los nombres los decide LOGO_PROVEEDOR en templates/quien_cargo.html:
+QUE ARCHIVO USA CADA UNO lo deciden LOGO_PROVEEDOR y LOGO_AEROLINEA en
+templates/quien_cargo.html, y guardan el NOMBRE COMPLETO con extension. Conviven .png y
+.svg a proposito: pegarle una extension fija al nombre obligaria a convertir archivos
+para que entren, que es trabajo por una decision del codigo.
 
-    ypf.svg      YPF
-    shell.svg    Raizen  <-- la planilla la nombra "Raizen", que es la operadora, pero la
-                             marca en la pista es SHELL y es la que reconoce quien mira
-                             el mapa. Mismo archivo, otro nombre.
-    axion.svg    Axion
+    ypf.png      YPF          oficial
+    shell.png    Raizen       oficial  <-- la planilla la nombra "Raizen", que es la
+                                           operadora, pero la marca en la pista es SHELL
+                                           y es la que reconoce quien mira el mapa.
+    axion.png    Axion        oficial
+    ar.png       AR  Aerolineas Argentinas   oficial
+    wj.png       WJ  JetSMART                oficial
+    h2.svg       H2  Sky Airline    dibujado a mano
+    g3.svg       G3  GOL            dibujado a mano
+    la.svg       LA  LATAM Chile    dibujado a mano
+    jj.svg       JJ  LATAM Brasil   dibujado a mano (mismo archivo que la.svg)
 
-SON DIBUJOS PROPIOS, NO LOS ARCHIVOS OFICIALES. Se hicieron a mano el 2026-09-09 porque
-no habia forma de meter los oficiales al repo en ese momento. Son aproximaciones
-reconocibles: si aparecen los originales, se reemplazan estos archivos por los buenos y
-no hay que tocar codigo -- mientras conserven el nombre y sigan siendo .svg.
+EL FONDO BLANCO SE RECORTO A MANO. Los cinco oficiales venian con fondo blanco opaco --
+tres sin canal alfa y dos con alfa pero todo opaco -- y sobre el chip oscuro se veian
+como un rectangulo blanco. Los originales quedaron en originales/, para poder rehacer el
+recorte si hace falta.
 
-Van en SVG y no en PNG: pesan nada, escalan sin pixelarse (se dibujan a 13px en el chip
-y podrian ir mas grandes en un panel) y son texto, asi que un cambio se ve en el diff.
+NO SE FILTRO POR COLOR: la X de Axion ES BLANCA, y "sacar todo lo blanco" habria borrado
+el logo en vez del fondo. Se relleno por inundacion desde los cuatro bordes, asi que solo
+se vuelve transparente el blanco CONECTADO AL MARCO. Despues una pasada de suavizado deja
+semitransparente lo casi-blanco pegado al fondo, para que no quede un halo.
 
-MIENTRAS UN ARCHIVO NO ESTE, NO SE ROMPE NADA: el <img> tiene un onerror que lo saca de
-la pagina, asi que el chip queda con su color y su texto, como estaba antes.
+Se hizo sin Pillow -- no esta vendorizado y no se agrega una dependencia por esto --
+decodificando el PNG con zlib. El script quedo fuera del repo: si hay que repetirlo, esta
+descrito arriba con el suficiente detalle.
+
+MIENTRAS UN ARCHIVO NO ESTE NO SE ROMPE NADA: el <img> lleva un onerror que lo saca de la
+pagina, asi que el chip queda con su color y su texto. Y una aerolinea que no este en
+LOGO_AEROLINEA no pide ningun archivo, para no generar un 404 por fila.
