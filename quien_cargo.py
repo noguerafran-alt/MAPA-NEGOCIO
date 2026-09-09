@@ -123,6 +123,66 @@ def _hora(epoch) -> str:
     return datetime.fromtimestamp(epoch, timezone.utc).strftime("%d/%m %H:%M")
 
 
+def dia_de(partida: dict) -> str | None:
+    """El dia LOCAL en que la partida despego, 'AAAA-MM-DD', o None.
+
+    MISMA SEMANTICA QUE msrtic.dia_de, y tiene que seguir siendolo: si las dos
+    pantallas agruparan por dias distintos, "el 8 de septiembre" mostraria dos
+    universos y nadie sabria cual creer.
+
+    La hora REAL manda sobre la programada: un vuelo programado 23:50 que sale 00:20
+    cargo combustible el dia siguiente, y para "cuanto se vendio el dia 8" lo que cuenta
+    es cuando salio, no cuando estaba previsto.
+
+    Y es dia LOCAL, no UTC. AA2000 publica en hora argentina y la pregunta es sobre el
+    dia del calendario de aca; agrupando por UTC, todo lo que sale despues de las 21:00
+    se contaria al dia siguiente.
+    """
+    ep = partida.get("real_epoch") or partida.get("programada_epoch")
+    if not ep:
+        return None
+    return time.strftime("%Y-%m-%d", time.localtime(ep))
+
+
+def dias_disponibles(db: str) -> list[dict]:
+    """[{'dia', 'partidas', 'despegadas'}] de mas nuevo a mas viejo.
+
+    Puebla el selector con lo que EXISTE en vez de un calendario donde casi todas las
+    fechas estan vacias. Y trae el conteo porque un dia con 30 partidas y otro con 700
+    no se leen igual: el primero esta a medio sondear, y sin el numero eso no se ve.
+    """
+    conn = aa2000.abrir_lectura(db)
+    if conn is None:
+        return []
+    try:
+        crudas = aa2000.operaciones(conn, aeropuerto=None, movimiento="D",
+                                    limite=200000)
+    finally:
+        conn.close()
+    cuenta: dict[str, dict] = {}
+    for p in crudas:
+        d = dia_de(p)
+        if not d:
+            continue
+        c = cuenta.setdefault(d, {"dia": d, "partidas": 0, "despegadas": 0})
+        c["partidas"] += 1
+        if p.get("real_epoch"):
+            c["despegadas"] += 1
+    return sorted(cuenta.values(), key=lambda c: c["dia"], reverse=True)
+
+
+def _filtrar_dia(crudas: list[dict], dia: str | None) -> list[dict]:
+    """Las partidas de ese dia local. Sin `dia`, no filtra nada.
+
+    EL DIA MANDA SOBRE LA VENTANA DE HORAS y no se combinan: son dos cortes distintos
+    del mismo dato y cruzarlos daria un subconjunto que nadie pidio -- "las de hoy que
+    ademas entren en las ultimas 24 h" no es una pregunta que alguien haga.
+    """
+    if not dia:
+        return crudas
+    return [p for p in crudas if dia_de(p) == dia]
+
+
 def _meta_tabla(tabla: dict) -> dict:
     """Los metadatos de la planilla, sin nada que no sea serializable a JSON.
 
@@ -314,7 +374,7 @@ def resumen(filas: list[dict]) -> dict:
 
 def desde_base(db: str, horas: float | None = None,
                origen: str | None = None, tabla: dict | None = None,
-               piso: float | None = None):
+               piso: float | None = None, dia: str | None = None):
     """Lee las partidas ocurridas y las clasifica. None si falta la base."""
     conn = aa2000.abrir_lectura(db)
     if conn is None:
@@ -348,8 +408,12 @@ def desde_base(db: str, horas: float | None = None,
         ocurridas = [f for f in ocurridas if f["real_epoch"] >= piso]
         descartadas_viejas = antes - len(ocurridas)
 
-    if horas:
-        import time
+    # EL DIA MANDA SOBRE LA VENTANA DE HORAS: dos cortes distintos del mismo dato, y
+    # cruzarlos daria un subconjunto que nadie pidio. Es la misma precedencia que ya
+    # usa MS RTIC, para que las dos pantallas se filtren igual.
+    if dia:
+        ocurridas = _filtrar_dia(ocurridas, dia)
+    elif horas:
         corte = time.time() - horas * 3600
         ocurridas = [f for f in ocurridas if f["real_epoch"] >= corte]
     if origen:
@@ -362,6 +426,7 @@ def desde_base(db: str, horas: float | None = None,
     r["vuelos"] = filas
     r["tabla"] = _meta_tabla(tabla)
     r["n_rutas_en_tabla"] = len(tabla.get("rutas") or {})
+    r["dia"] = dia
     r["programadas_sin_ocurrir"] = programadas
     r["no_salieron"] = no_salieron
     # El piso y cuanto se dejo afuera por el: la pantalla tiene que poder decir
@@ -374,7 +439,7 @@ def desde_base(db: str, horas: float | None = None,
 
 
 def tablero(db: str, horas: float | None = None, origen: str | None = None,
-            tabla: dict | None = None):
+            tabla: dict | None = None, dia: str | None = None):
     """El tablero de partidas, como el portal de AA2000 pero con proveedor.
 
     LA DIFERENCIA CON desde_base() ES QUE ACA ENTRAN LAS PROGRAMADAS. El portal
@@ -401,8 +466,9 @@ def tablero(db: str, horas: float | None = None, origen: str | None = None,
                                     limite=200000)
     finally:
         conn.close()
-    if horas:
-        import time
+    if dia:
+        crudas = _filtrar_dia(crudas, dia)
+    elif horas:
         corte = time.time() - horas * 3600
         crudas = [f for f in crudas
                   if (f.get("real_epoch") or f.get("programada_epoch") or 0)

@@ -1126,17 +1126,29 @@ def api_quien_cargo():
     except ValueError:
         horas = None
     origen = (request.args.get('origen') or '').strip().upper() or None
+    # EL DIA, que es el corte por defecto. Sin parametro se muestra el DIA CORRIENTE y
+    # no todo lo acumulado: la pregunta de esta pantalla es "quien esta cargando hoy", y
+    # servir el historico entero mezcla semanas en un solo porcentaje que no responde a
+    # ninguna fecha. `dia=todo` es la salida explicita para ver el acumulado.
+    _dia = (request.args.get('dia') or '').strip()
+    if _dia == 'todo':
+        dia = None
+    else:
+        dia = _dia or datetime.now().strftime('%Y-%m-%d')
     db = msrtic.base_oficial()
     tabla = proveedores.cargar_tabla(msrtic.tabla_proveedores())
     try:
-        tablero = quien_cargo.tablero(db, horas, origen, tabla)
+        tablero = quien_cargo.tablero(db, horas, origen, tabla, dia=dia)
         # `origen` VA A LAS DOS. Pasarselo solo al tablero filtra la lista y deja
         # los porcentajes nacionales al lado: el mismo error de comparar una parte
         # contra el todo que se saco de la linea del PA en /proyecciones.
-        resumen = quien_cargo.desde_base(db, horas, origen=origen, tabla=tabla)
+        resumen = quien_cargo.desde_base(db, horas, origen=origen, tabla=tabla, dia=dia)
         est = sondeo.estado() if sondeo is not None else {'activo': False}
-        return jsonify(_quien_cargo_plano(tablero, resumen, est,
-                                          msrtic.tabla_proveedores()))
+        _payload = _quien_cargo_plano(tablero, resumen, est,
+                                      msrtic.tabla_proveedores())
+        _payload['dias'] = quien_cargo.dias_disponibles(db)
+        _payload['dia'] = dia
+        return jsonify(_payload)
     except Exception as e:
         app.logger.warning('quien-cargo fallo: %s: %s', type(e).__name__, e)
         return jsonify({'error': '%s: %s' % (type(e).__name__, e)}), 500
