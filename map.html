@@ -2036,7 +2036,21 @@ function render(skipListRebuild) {
   // (más abajo) se siguen dibujando igual, ya que salen de airportFiltered, no de acá.
   const visible = airportFiltered.filter(r => !deselectedRoutes.has(r.o + ' - ' + r.d));
 
-  const maxMetric = Math.max(1, ...visible.map(r => (r[activeMetric] != null ? r[activeMetric] : 0)));
+  // EL GROSOR CAMBIA DE SIGNIFICADO CON MS RTIC, y tiene que hacerlo. Fuera del filtro
+  // es la ocupación (pax/vuelo), que es la lectura útil del histórico de ANAC. Pero las
+  // partidas de AA2000 informan pasajeros en apenas 2 de cada 10, así que ahí la
+  // ocupación deja casi todas las rutas en el grosor mínimo: el mapa se ve como un
+  // montón de líneas finas iguales y no se distingue lo que pesa de lo que no.
+  //
+  // Con el filtro puesto el grosor pasa a ser el CONSUMO de la ruta en el período, que
+  // es además lo que se está mirando cuando se prende MS RTIC.
+  const metrica = msRticActivo ? 'm3Ruta' : activeMetric;
+  for (const r of visible) {
+    // Se calcula acá y no en msRticCandidatos() para que valga también fuera del filtro
+    // (donde sale del meta del histórico) sin duplicar la cuenta en dos lugares.
+    r.m3Ruta = (r.consumoM3 || 0) * (r.vuelos || 0);
+  }
+  const maxMetric = Math.max(1, ...visible.map(r => (r[metrica] != null ? r[metrica] : 0)));
 
   for (const r of visible) {
     totalVuelos += r.vuelos;
@@ -2047,7 +2061,7 @@ function render(skipListRebuild) {
     totalM3 += (r.consumoM3 || 0) * (r.vuelos || 0);
     nRoutes++;
     const { lons, lats } = geodesicPoints(r.olat, r.olon, r.dlat, r.dlon);
-    const width = widthForValue(r[activeMetric], maxMetric);
+    const width = widthForValue(r[metrica], maxMetric);
     const routeKey = r.o + ' - ' + r.d;
     const routeColor = colorForRoute(routeKey);
     const isDimmed = selectedRoutes.size > 0 && !selectedRoutes.has(routeKey);
@@ -2296,7 +2310,7 @@ function render(skipListRebuild) {
     }
   }
   const aggregateStats =
-    `${periodoLabel} — ${nRoutes} rutas · ${totalVuelos.toLocaleString('es-AR')} vuelos · ${totalPax.toLocaleString('es-AR')} pasajeros · ${m3Label} · grosor = ${METRIC_LABELS[activeMetric]}`;
+    `${periodoLabel} — ${nRoutes} rutas · ${totalVuelos.toLocaleString('es-AR')} vuelos · ${totalPax.toLocaleString('es-AR')} pasajeros · ${m3Label} · grosor = ${msRticActivo ? 'Consumo (m³)' : METRIC_LABELS[activeMetric]}`;
 
   if (airportFilterMode === 'none') {
     document.getElementById('stats').textContent = 'Ningún aeropuerto seleccionado (elegí uno o más, o "Todos")';
