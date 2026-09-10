@@ -11,6 +11,7 @@
 <meta name="google" content="notranslate">
 <title>Rutas Aéreas Argentinas — Vuelos, Pasajeros y Ocupación</title>
 <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+<script src="/static/logos.js"></script>
 <style>
   html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #0b1020; overflow: hidden; }
   * { box-sizing: border-box; font-family: Arial, Helvetica, sans-serif; }
@@ -197,7 +198,13 @@
     max-height: calc((100vh - var(--alto-superior) - var(--alto-inferior) - 64px) / var(--escala));
     background: rgba(16,22,46,0.92); backdrop-filter: blur(6px);
     border: 1px solid #2a3358; border-radius: 12px;
-    padding: 12px 14px; color: #eee; width: 260px;
+    padding: 12px 14px; color: #eee;
+    /* 300 y no 260: los logos de aerolinea de cada fila le comian el nombre a la ruta.
+       MEDIDO sobre las 179 filas -- sin logos se corta 1 nombre; con logos y 260px se
+       cortaban 19, con 280 seis, con 300 tres y con 320 ninguno. Se toma 300 porque a
+       partir de ahi el costo es casi nulo y 320 le saca 60px al mapa, que es lo que se
+       viene a mirar. */
+    width: 300px;
     display: flex; flex-direction: column;
     box-shadow: 0 8px 24px rgba(0,0,0,0.4);
   }
@@ -205,6 +212,18 @@
   .mini-btn { font-size: 10px; padding: 3px 8px; border-radius: 12px; border: 1px solid #3a4470; background: #1a2144; color: #cdd4ee; cursor: pointer; margin-left: 4px; }
   #routeSearch { font-size: 12px; padding: 5px 8px; border-radius: 6px; border: 1px solid #3a4470; background: #1a2144; color: #fff; margin-bottom: 8px; width: 100%; }
   #route-list { overflow-y: auto; flex: 1; font-size: 12px; }
+  /* Los logos de la lista de rutas: a la derecha del nombre y sin empujarlo. `flex:0 0
+     auto` mas `margin-left:auto` los manda al borde; el nombre de la ruta es lo que se
+     lee y el logo acompania. */
+  /* Los logos van a la derecha del nombre y NO PUEDEN COMERSELO. La primera version los
+     dejaba crecer y el panel pasaba a decir "Aeroparque -> As...": el nombre de la ruta
+     es el dato y el logo acompania, no al reves. Por eso el contenedor tiene un tope
+     duro de ancho y las marcas denominativas -- GOL, LATAM, JetSMART son palabras, no
+     simbolos -- se recortan antes que el texto. */
+  .logos-ruta { margin-left: auto; flex: 0 0 auto; display: inline-flex; align-items: center;
+                gap: 3px; padding-left: 6px; max-width: 46px; overflow: hidden; }
+  .logos-ruta img { height: 10px; width: auto; max-width: 21px; object-fit: contain;
+                    opacity: .85; }
   .route-item { display: flex; align-items: center; gap: 6px; padding: 3px 2px; cursor: pointer; }
   .route-item:hover { background: rgba(76,124,240,0.15); border-radius: 4px; }
   .route-item input { flex-shrink: 0; }
@@ -1618,6 +1637,31 @@ function updateRouteList(candidates) {
     row.appendChild(cb);
     row.appendChild(swatch);
     row.appendChild(label);
+
+    // LOS LOGOS DE QUIEN LA VUELA, y solo con MS RTIC activo: la lista sale del
+    // historico de ANAC, que no trae aerolinea. Sin MS RTIC no se sabe quien vuela la
+    // ruta HOY, y poner un logo ahi seria afirmarlo. `aerolineas` solo existe cuando
+    // esas filas vinieron del radar.
+    if (r.aerolineas && r.aerolineas.length) {
+      // Ordenadas por vuelos y sin repetir: una ruta puede traer varias filas de la
+      // misma compania. Se cortan en cuatro -- mas no entran en 12px de fila y la
+      // cola son companias con un vuelo.
+      const vistas = new Map();
+      for (const f of r.aerolineas) {
+        const c = (f.aerolinea_id || '').trim().toUpperCase();
+        if (c) vistas.set(c, (vistas.get(c) || 0) + (f.vuelos || 0));
+      }
+      // DOS y no cuatro: en 180px de panel, cuatro logos se comen el nombre de la ruta.
+      // Se quedan las dos que mas vuelan, que es lo que alguien reconoceria igual.
+      const html = [...vistas.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2)
+        .map(([c]) => logoAerolinea(c)).filter(Boolean).join('');
+      if (html) {
+        const cont = document.createElement('span');
+        cont.className = 'logos-ruta';
+        cont.innerHTML = html;
+        row.appendChild(cont);
+      }
+    }
     row.onclick = (e) => { if (e.target !== cb) { cb.checked = !cb.checked; cb.onchange(); } };
     container.appendChild(row);
   });
