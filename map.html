@@ -1378,11 +1378,20 @@ function ocupTexto(r) {
     return r.ocup + ' pax/vuelo'
       + (r.vuelosConPaxPos ? ` <i>(sobre ${r.vuelosConPaxPos} de ${r.vuelos} vuelos)</i>` : '');
   }
+  const chica = r.ocupMuestraChica
+    ? ` <i>(se descartó la medida de ${r.ocupMuestraChica.n} de ${r.vuelos} vuelos:`
+      + ` ${r.ocupMuestraChica.ocup} pax/vuelo, muestra chica)</i>`
+    : '';
   const e = r.ocupEstimada;
-  if (!e) return 'sin dato';
+  if (!e) return 'sin dato' + chica;
   return `~${e.ocup} pax/vuelo <i>(estimada: ${Math.round(e.lf * 100)}% de ocupación del`
-       + ` histórico, sobre ${e.asientos} asientos)</i>`;
+       + ` histórico, sobre ${e.asientos} asientos)</i>` + chica;
 }
+
+// EL MINIMO DE MUESTRA DE LA OCUPACION MEDIDA. Los dos numeros salieron de medir, no de
+// elegirlos: ver el comentario en msRticCandidatos(), donde se aplican. Son alternativos.
+const OCUP_MIN_VUELOS = 3;
+const OCUP_MIN_COBERTURA = 0.5;
 
 function msRticCandidatos() {
   const porRuta = new Map();
@@ -1442,8 +1451,36 @@ function msRticCandidatos() {
     // tenia 7 de 7 vuelos informados, todos en 0, y salia 0,0 pax/vuelo para un A330.
     // Dividir por los positivos da la ocupacion DE LO QUE SE SABE QUE VOLO, que es para
     // lo que sirve el indicador.
-    c.ocup = (c.pax && c.vuelosConPaxPos)
-      ? Math.round((c.pax / c.vuelosConPaxPos) * 10) / 10 : null;
+    // MINIMO DE MUESTRA. Una ocupacion medida sobre UN vuelo no es la ocupacion de la
+    // ruta, y el promedio no lo avisa. Medido sobre las 203 rutas del filtro, comparando
+    // cada medida contra la que habria dado el historico de esa misma ruta:
+    //
+    //   n=1      20 rutas, ratio 0,01 a 3,74  -- 4 fuera de 2x
+    //   n=2       6 rutas, ratio 0,95 a 1,44  -- ninguna fuera
+    //   n=3 a 4   6 rutas, ratio 0,94 a 1,05
+    //   n>=5      5 rutas, todas coherentes
+    //
+    // Los n=1 no eran ruido estadistico: eran vuelos que no representan la ruta. Mar del
+    // Plata-Aeroparque informo UN PASAJERO en 1 de 10 vuelos (el historico daba 100) y
+    // Aeroparque-Comodoro informo 7 en 1 de 21 (historico 112). Un ferry o un vuelo de
+    // posicionamiento pesa igual que uno lleno, y despues elige el avion y el consumo de
+    // la ruta entera: con 7 pax/vuelo el modelo baja a un regional.
+    //
+    // Y NO ALCANZA CON PEDIR 3 VUELOS. Una ruta con una sola partida, y esa partida
+    // medida, esta medida al 100%: Comodoro-Cordoba es el caso (1 de 1, medida 81 contra
+    // 88 estimada). Por eso las dos condiciones son ALTERNATIVAS -- bastantes vuelos, O
+    // buena parte de la ruta -- y no las dos a la vez.
+    const nOcup = c.vuelosConPaxPos;
+    const cobOcup = c.vuelos ? nOcup / c.vuelos : 0;
+    const medible = !!(c.pax && nOcup)
+                    && (nOcup >= OCUP_MIN_VUELOS || cobOcup >= OCUP_MIN_COBERTURA);
+    c.ocup = medible ? Math.round((c.pax / nOcup) * 10) / 10 : null;
+    // Lo descartado se GUARDA para poder decirlo. Cambiar un numero por otro en silencio
+    // deja a alguien comparando la ocupacion contra los pasajeros que la pantalla dice
+    // que se informaron, sin entender por que no cierran.
+    c.ocupMuestraChica = (!medible && c.pax && nOcup)
+      ? {ocup: Math.round((c.pax / nOcup) * 10) / 10, n: nOcup}
+      : null;
     // consumoM3 tiene que ser POR VUELO, no el total de la ruta: todo el mapa lo
     // multiplica por `vuelos` (los totales, el tooltip, la tabla y el ranking de
     // aeropuertos). Poniendo el total acá, el consumo se multiplicaba dos veces --
@@ -1887,9 +1924,16 @@ function openRouteDetail(routeKey) {
     ? `${(route.pax || 0).toLocaleString('es-AR')} (en ${route.vuelosConPaxPos} de ${route.vuelos})`
     : 'ningún vuelo informó';
   // Mismo criterio que el tooltip, sin el desagregado de vuelos que no entra en la fila.
-  document.getElementById('rd-ocup').textContent = route.ocup != null
+  // Mismo criterio y misma honestidad que el tooltip: si habia una medida y se descarto
+  // por muestra chica, se dice. Aca en texto plano, que es lo que este panel acepta.
+  const ocupChica = route.ocupMuestraChica
+    ? ` — se descartó la medida de ${route.ocupMuestraChica.n} de ${route.vuelos} vuelos`
+      + ` (${route.ocupMuestraChica.ocup} pax/vuelo, muestra chica)`
+    : '';
+  document.getElementById('rd-ocup').textContent = (route.ocup != null
     ? `${route.ocup} pax/vuelo`
-    : (route.ocupEstimada ? `~${route.ocupEstimada.ocup} pax/vuelo (estimada)` : 'sin dato');
+    : (route.ocupEstimada ? `~${route.ocupEstimada.ocup} pax/vuelo (estimada)` : 'sin dato'))
+    + ocupChica;
   document.getElementById('rd-dist').textContent = route.distanciaKm != null
     ? `${route.distanciaKm.toLocaleString('es-AR')} km` : 'N/D';
 
