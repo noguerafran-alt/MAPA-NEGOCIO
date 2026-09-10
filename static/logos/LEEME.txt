@@ -14,10 +14,20 @@ para que entren, que es trabajo por una decision del codigo.
     axion.png    Axion        oficial
     ar.png       AR  Aerolineas Argentinas   oficial
     wj.png       WJ  JetSMART                oficial
-    h2.svg       H2  Sky Airline    dibujado a mano
-    g3.svg       G3  GOL            dibujado a mano
-    la.svg       LA  LATAM Chile    dibujado a mano
-    jj.svg       JJ  LATAM Brasil   dibujado a mano (mismo archivo que la.svg)
+    h2.svg       H2  Sky Airline            dibujado a mano
+    g3.svg       G3  GOL                    dibujado a mano
+    cm.svg       CM  Copa Airlines          dibujado a mano
+    o4.svg       O4  Andes Lineas Aereas    dibujado a mano
+    5u.svg       5U  LADE                   dibujado a mano
+    la.svg       LA  LATAM Chile            dibujado a mano
+    jj.svg       JJ  LATAM Brasil           idem (las tres LATAM comparten marca:
+    lp.svg       LP  LATAM Peru             es la misma empresa y el mismo logo)
+
+LOS DIBUJADOS A MANO NO SON LOS OFICIALES. Los de Copa y GOL son wordmarks conocidos y
+salieron parecidos; los de Andes y LADE se hicieron SIN REFERENCIA a la vista, con
+colores plausibles: sirven como ancla visual pero conviene reemplazarlos por los buenos
+cuando aparezcan. Reemplazar el archivo alcanza -- no hay que tocar codigo -- mientras
+conserve el nombre.
 
 EL FONDO BLANCO SE RECORTO A MANO. Los cinco oficiales venian con fondo blanco opaco --
 tres sin canal alfa y dos con alfa pero todo opaco -- y sobre el chip oscuro se veian

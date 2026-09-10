@@ -17,7 +17,11 @@ const LOGO_PROVEEDOR = { YPF: 'ypf.png', RAIZEN: 'shell.png', AXION: 'axion.png'
    muestran logo. Si el codigo no esta aca NO se pide el archivo, para no generar un 404
    por cada fila de una aerolinea sin logo. */
 const LOGO_AEROLINEA = { AR: 'ar.png', WJ: 'wj.png',
-                         H2: 'h2.svg', G3: 'g3.svg', LA: 'la.svg', JJ: 'jj.svg' };
+                         H2: 'h2.svg', G3: 'g3.svg', CM: 'cm.svg', O4: 'o4.svg',
+                         '5U': '5u.svg',
+                         // Las tres LATAM comparten marca: son la misma empresa con
+                         // filial distinta, y el logo que se ve en la pista es el mismo.
+                         LA: 'la.svg', JJ: 'jj.svg', LP: 'lp.svg' };
 
 // Escape propio: este archivo lo cargan dos paginas y no puede depender del `esc()` de
 // ninguna. Los codigos IATA vienen de una fuente ajena.

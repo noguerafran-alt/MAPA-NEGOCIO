@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 22" role="img" aria-label="Andes Líneas Aéreas">
+  <!-- La montania delante del nombre: es lo unico que distingue este wordmark de
+       cualquier otro a 14px de alto. -->
+  <path d="M2 18 9 6l5 7 3-4 5 9z" fill="#C8102E"/>
+  <text x="25" y="17" font-family="Arial, Helvetica, sans-serif" font-size="16"
+        font-weight="700" fill="#1F4E9C" textLength="37"
+        lengthAdjust="spacingAndGlyphs">andes</text>
+</svg>
