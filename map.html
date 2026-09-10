@@ -1548,8 +1548,12 @@ function msRticTooltip(r) {
       s += `<i>Pasajeros informados en ${r.vuelosConPaxPos} de ${r.vuelos} vuelos</i><br>`;
     }
   } else if (r.vuelosConPax) {
+    // El singular va aparte porque "los 1 en cero" se lee como un error de la pantalla, y
+    // una pantalla que parece rota hace desconfiar del numero de al lado, que esta bien.
+    const enCero = r.vuelosConPax === 1 ? 'y ese vino en cero'
+                                        : `los ${r.vuelosConPax} en cero`;
     s += `<i>Pasajeros: AA2000 los informó en ${r.vuelosConPax} de ${r.vuelos} vuelos,`
-       + ` los ${r.vuelosConPax} en cero — no se usan</i><br>`;
+       + ` ${enCero} — no se usan</i><br>`;
   } else {
     s += `<i>Pasajeros: ningún vuelo los informó</i><br>`;
   }
