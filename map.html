@@ -1529,8 +1529,29 @@ function msRticTooltip(r) {
   // matrícula y su avión sale del modelo, no del registro.
   s += `<i>Avión: ${r.medidos} por matrícula, ${r.estimados} estimado`
      + `${r.estimados === 1 ? '' : 's'}</i><br>`;
-  if (r.vuelosConPax < r.vuelos) {
-    s += `<i>Pasajeros informados en ${r.vuelosConPax} de ${r.vuelos} vuelos</i><br>`;
+  // ESTA LINEA MIRA `vuelosConPaxPos`, NO `vuelosConPax`, y el motivo es que antes se
+  // contradecia con la de al lado: decia "Pasajeros informados en 17 de 21 vuelos" y el
+  // bloque de abajo, "ningun vuelo informo". Las dos eran ciertas y contaban cosas
+  // distintas -- una, los vuelos con el CAMPO presente; la otra, los que traen un numero
+  // mayor que cero. AA2000 publica 0 en los internacionales, asi que esos 17
+  // "informados" eran 17 ceros.
+  //
+  // Los ceros NO se usan: 0 pasajeros sobre 21 vuelos da 0,0 pax/vuelo en un A330 de 325
+  // asientos, que es el numero falso que ya se saco una vez. La ocupacion sale estimada
+  // del historico y la etiqueta lo dice.
+  //
+  // PERO SE DICE QUE LLEGARON EN CERO. Callarlo deja dos lecturas igual de malas: que
+  // AA2000 no manda nada (manda, y manda cero) o que la estimacion esta ignorando datos
+  // buenos, que es lo que hace ir a buscar un bug donde no hay.
+  if (r.vuelosConPaxPos) {
+    if (r.vuelosConPaxPos < r.vuelos) {
+      s += `<i>Pasajeros informados en ${r.vuelosConPaxPos} de ${r.vuelos} vuelos</i><br>`;
+    }
+  } else if (r.vuelosConPax) {
+    s += `<i>Pasajeros: AA2000 los informó en ${r.vuelosConPax} de ${r.vuelos} vuelos,`
+       + ` los ${r.vuelosConPax} en cero — no se usan</i><br>`;
+  } else {
+    s += `<i>Pasajeros: ningún vuelo los informó</i><br>`;
   }
   return s + '<br>';
 }
