@@ -139,6 +139,43 @@ _mal = _appmod._quien_cargo_plano(_tab, dict(_res, total=677), {'activo': True},
 check('Si alguien vuelve a mezclar las cuentas, la pantalla avisa',
       bool(_mal.get('denominador_inconsistente')),
       'no aviso nada con el denominador en 677')
+
+print('\n' + '--- MS RTIC: las funciones se EJECUTAN, no solo se importan')
+# ESTE BLOQUE EXISTE POR UN ERROR MIO, del 2026-09-10. Se porteo un arreglo del mapa
+# local que llamaba a `bases_oficiales()` -- una funcion que en ESTE repo no existe,
+# porque aca hay una sola base -- y quedo un NameError en cada llamada a `filas()`.
+# verificar_deploy paso en VERDE y se pusheo, porque ningun chequeo llamaba a filas().
+# Importar un modulo no prueba que sus funciones corran: hay que correrlas.
+import msrtic as _ms  # noqa
+
+check('msrtic.base_oficial() responde', bool(_ms.base_oficial()))
+try:
+    _clave = _ms._clave_de_archivo()
+    check('msrtic._clave_de_archivo() responde', _clave is None or isinstance(_clave, tuple),
+          repr(_clave)[:80])
+except Exception as _e:
+    check('msrtic._clave_de_archivo() responde', False, '%s: %s' % (type(_e).__name__, _e))
+
+# filas() es el corazon del filtro: si esto no corre, /api/msrtic devuelve
+# {disponible: false} y la capa entera desaparece de la pantalla sin explicar por que.
+with app.app_context():
+    try:
+        _fs, _est = _ms.filas(horas=24.0, usar_cache=False)
+        check('msrtic.filas() corre sin excepcion', True,
+              '%d filas, %s partidas leidas' % (len(_fs), (_est or {}).get('partidas')))
+    except Exception as _e:
+        check('msrtic.filas() corre sin excepcion', False,
+              '%s: %s' % (type(_e).__name__, _e))
+
+    # Y el endpoint entero, que es lo que ve el navegador. Nivel 1 porque va detras
+    # del login.
+    with c.session_transaction() as _s:
+        _s['user_nivel'] = 1
+    _r = c.get('/api/msrtic')
+    check('/api/msrtic da 200', _r.status_code == 200, 'status %s' % _r.status_code)
+    _j = _r.get_json() or {}
+    check('/api/msrtic no reporta un error interno',
+          'error' not in _j, str(_j.get('error'))[:120])
 print()
 if fallos:
     print(f'RESULTADO: {len(fallos)} verificacion(es) fallaron')

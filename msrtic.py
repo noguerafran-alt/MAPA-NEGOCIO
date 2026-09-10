@@ -498,22 +498,20 @@ def calcular(horas=24.0, coords=None, dia=None, desde=None, hasta=None):
 
 
 def _clave_de_archivo():
-    """Mtime y tamano de TODAS las bases que se leen, no de una.
+    """Mtime y tamano de las bases que se leen. Cambia cuando alguna se escribe.
 
-    Antes miraba solo `base_oficial()` -- UNA -- mientras `_partidas()` lee las DOS y las
-    une. Con dos escritores distintos (el radar sondeando la suya, el Excel del SharePoint
-    completando la propia del mapa), la base que cambiaba podia no ser la que la clave
-    vigilaba: el filtro seguia sirviendo las filas viejas y nada lo decia. El sintoma es
-    el peor de todos -- numeros de ayer con cara de los de hoy -- y es el mismo bicho que
-    el import ya resolvia invalidando el cache a mano, pero por la puerta de al lado: un
-    proceso que NO hizo el import igual tiene que ver el cambio.
+    ACA HAY UNA SOLA BASE, la del disco de Render: no existe el caso de dos que si tiene
+    el mapa local (el radar escribe la suya, el Excel del SharePoint completa la otra), y
+    por eso no hay `bases_oficiales()` en este repo.
 
-    Va por ruta completa y ordenado: las dos bases se llaman igual (`aa2000_oficial.db`),
-    y `bases_oficiales()` las devuelve por frescura, asi que el orden puede cambiar sin
-    que haya cambiado nada del contenido.
+    Se escribe como lista igual, de una sola entrada, para que la copia local y esta no
+    divergan en la forma: el 2026-09-10 se porteo el arreglo de alla tal cual y quedo
+    llamando a `bases_oficiales()`, que aca no existe -- NameError en cada `filas()`, con
+    `verificar_deploy.py` en verde porque no llamaba a `filas()`. Un porteo entre dos
+    copias que no tienen la misma API no es un copy-paste.
     """
     partes = []
-    for p in bases_oficiales():
+    for p in (base_oficial(),):
         try:
             st = os.stat(p)
             partes.append((p, st.st_mtime_ns, st.st_size))
