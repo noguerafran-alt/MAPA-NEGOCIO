@@ -630,6 +630,7 @@ cargarMsRtic();
 
 fetch('/api/data').then(r => r.json()).then(d => {
   DATA = d;
+  _ocupHistCache = null;   // el indice de ocupacion historica cuelga de DATA
   PERIODOS_PROY = new Set(d.periodos_proyectados || []);
   if (d.modelo_params) MODELO = Object.assign({}, MODELO, d.modelo_params);
   // Marcador de versión: si el subtítulo no muestra "v2", lo que está corriendo es la build
@@ -1233,6 +1234,156 @@ function msRticFilas() {
 // Una ruta puede tener varias aerolíneas: se suman para dibujar la línea, y el
 // desagregado se guarda en `aerolineas` para el tooltip. Sumar y perder el detalle
 // tiraría lo único que esta vista aporta sobre el histórico.
+/* LA OCUPACION CUANDO AA2000 NO INFORMO PASAJEROS: SE ESTIMA, Y SE DICE QUE ES ESTIMADA.
+
+   El feed publica pasajeros en 2 de cada 10 partidas, y un "0" de ese campo es casi
+   seguro "no informado todavia" (ver _pasajeros() en aa2000.py). Con eso, la mayoria de
+   las rutas del filtro quedaban en "sin dato" -- EZE-MAD, con 17 vuelos, 11 de ellos
+   "informados" y todos en cero, es el caso tipico. Un tablero que dice "sin dato" en casi
+   todas las filas no se usa.
+
+   SE TRANSFIERE EL FACTOR DE OCUPACION (pax / asientos), NUNCA EL pax/vuelo. Es la misma
+   regla que ocupacion.py aplica del lado del servidor para las rutas manuales, y no es un
+   detalle: 279,6 pax/vuelo de Ezeiza-Barcelona puestos sobre un A350 de 432 asientos dan
+   65% por casualidad, y sobre un 737 de 189 dan 148%, que es imposible. El factor es
+   adimensional y por eso viaja entre aviones distintos.
+
+   LA REFERENCIA ES LA MISMA RUTA EN EL HISTORICO DE ANAC, no un promedio de rutas
+   parecidas: para EZE-MAD existe EZE-MAD medido, y una ruta contra si misma es mejor
+   comparable que cualquier vecina en distancia. Se toman los ultimos 12 meses REALES
+   (DATA.year_months ya excluye los que solo tienen rutas manuales) para que un mes de
+   temporada no defina el factor de todo el ano.
+
+   Y VA EN UN CAMPO APARTE (`ocupEstimada`), JAMAS EN `ocup`. Dos motivos, los dos caros:
+   el switch del panel se llama "Ajustar por ocupacion REAL" y alimenta ajustePorOcupacion()
+   -- meterle una estimacion lo convertiria en una mentira sin cambiar una sola etiqueta --
+   y el grosor de las lineas por metrica "ocup" pasaria a mezclar medido con estimado sin
+   que la leyenda lo diga. Lo estimado se muestra, se marca y no se usa para calcular nada.
+
+   Sin la ruta en el historico, sin pasajeros ahi, o sin saber el avion de hoy, devuelve
+   null y la pantalla sigue diciendo "sin dato". Un numero de relleno seria peor. */
+let _ocupHistCache = null;
+
+function _ocupHistIndice() {
+  if (_ocupHistCache) return _ocupHistCache;
+  const idx = new Map();
+  if (!DATA) return idx;
+  const orden = DATA.month_order || [];
+  const reales = [];
+  for (const y of (DATA.years || [])) {
+    for (const m of ((DATA.year_months || {})[y] || [])) reales.push([y, m]);
+  }
+  // Del mas nuevo al mas viejo, y me quedo con los ultimos 12 meses que existieron de
+  // verdad -- no con los ultimos 12 del calendario, que meterian meses vacios.
+  reales.sort((a, b) => (b[0] - a[0]) || (orden.indexOf(b[1]) - orden.indexOf(a[1])));
+  const ventana = reales.slice(0, 12);
+  for (const tipo of ['cabotaje', 'internacional']) {
+    const bloque = DATA[tipo];
+    if (!bloque || !bloque.meta) continue;
+    const acc = new Map();
+    for (const [y, m] of ventana) {
+      for (const fila of (bloque.data[y + '-' + m] || [])) {
+        const [i, vuelos, pax] = fila;
+        // Sin pasajeros la fila no aporta al factor. Ojo que ~18% de las filas traen pax
+        // NULL con vuelos cargados: sumarlas como cero arrastraria el factor para abajo.
+        if (!vuelos || !pax) continue;
+        const cur = acc.get(i) || { vuelos: 0, pax: 0 };
+        cur.vuelos += vuelos;
+        cur.pax += pax;
+        acc.set(i, cur);
+      }
+    }
+    for (const [i, v] of acc) {
+      const meta = bloque.meta[i];
+      if (!meta) continue;
+      // Se guarda el meta entero y NO los asientos: el factor se calcula en
+      // ocupacionEstimada(), donde los asientos de referencia salen del mismo selector
+      // que usa el historico. Ver el comentario de ahi.
+      // EL PAR VA EN LAS DOS ORIENTACIONES, y no es una comodidad: el historico de ANAC
+      // es NO DIRECCIONAL. Verificado sobre el payload real -- 126 pares de cabotaje y
+      // 132 internacionales, y CERO tienen las dos direcciones cargadas. "Bahia
+      // Blanca->Aeroparque" no tiene fila propia: su fila es "Aeroparque->Bahia Blanca".
+      // Las partidas de AA2000 si son direccionales, asi que sin esto la mitad de las
+      // rutas del filtro se quedaba sin referencia por un detalle de como esta guardado
+      // el historico, no por falta de dato. La ocupacion, ademas, es del par: el mismo
+      // avion vuelve.
+      //
+      // El proveedor NO se toca con este criterio y no hay que confundirlos -- ese si es
+      // propiedad de la ruta DIRIGIDA, porque asi esta armada la planilla de YPF.
+      const entrada = {
+        meta: meta,
+        paxVuelo: Math.round((v.pax / v.vuelos) * 10) / 10,
+        meses: ventana.length,
+      };
+      idx.set(tipo + '|' + meta[0] + '|' + meta[1], entrada);
+      // Si la vuelta ya tiene fila propia (hoy ninguna la tiene, pero podria), gana la
+      // suya: no se pisa un dato directo con el del sentido contrario.
+      const vuelta = tipo + '|' + meta[1] + '|' + meta[0];
+      if (!idx.has(vuelta)) idx.set(vuelta, entrada);
+    }
+  }
+  _ocupHistCache = idx;
+  return idx;
+}
+
+function ocupacionEstimada(c) {
+  const h = _ocupHistIndice().get(c.tipo + '|' + c.o + '|' + c.d);
+  if (!h || !h.paxVuelo) return null;
+
+  // LOS ASIENTOS DE REFERENCIA SALEN DE resolverAvion(), NO DE meta[8].
+  // meta[8] es el avion POR DEFECTO que calculo el servidor, y para las cuatro rutas a
+  // Madrid dice 250 asientos. Ezeiza-Madrid vuela 290 pax/vuelo medidos: 290/250 = 116%,
+  // que el clamp recorta a 100%. Medido sobre las 173 rutas del filtro con la primera
+  // version de esto: las 90 estimaciones salieron TODAS con factor 100%, o sea que el
+  // "factor historico" no aportaba nada y el numero era, en los hechos, los asientos del
+  // avion de hoy. resolverAvion() elige el avion mas chico que cubra esa ocupacion, que
+  // es el mismo criterio con el que el mapa dibuja el historico.
+  const ref = resolverAvion(h.meta, h.paxVuelo);
+  const asientosRef = ref && ref.asientos;
+  if (!asientosRef) return null;
+  const lf = Math.min(h.paxVuelo / asientosRef, 1);
+
+  // EL AVION DE HOY SOLO SE USA SI LA MAYORIA DE LAS PARTIDAS LO TRAJO POR MATRICULA.
+  // `aviones` viene ordenado por frecuencia (msrtic.py), pero esa frecuencia mezcla los
+  // aviones MEDIDOS con los que el propio modelo estimo, y los estimados salen de la
+  // misma ocupacion historica que estoy usando aca. Con la mayoria estimada, multiplicar
+  // por sus asientos no agrega informacion: lava una suposicion y la devuelve como si
+  // fuera un dato. Aeroparque-Bariloche es el caso: 3 medidos contra 14 estimados, y
+  // `aviones[0]` daba CRJ200 -- 50 asientos para una ruta que vuela ~150 pax/vuelo.
+  //
+  // Sin avion medido la estimacion cae en los asientos de referencia, y eso hace que el
+  // numero sea exactamente el pax/vuelo historico de ESTA ruta. Es lo mas que se puede
+  // afirmar cuando lo unico que se sabe del vuelo de hoy es que salio.
+  const ficha = (DATA.flota || {})[c.avionCodigo];
+  const medido = (c.medidos || 0) > (c.estimados || 0);
+  const asientos = (medido && ficha && ficha.asientos) ? ficha.asientos : asientosRef;
+  const avion = (medido && ficha) ? (ficha.nombre || c.avionCodigo)
+                                  : (ref.avion || 'referencia del historico');
+  return {
+    ocup: Math.round(lf * asientos * 10) / 10,
+    lf: lf,
+    asientos: asientos,
+    avion: avion,
+    porMatricula: !!(medido && ficha && ficha.asientos),
+    asientosRef: asientosRef,
+    meses: h.meses,
+  };
+}
+
+// El texto de ocupacion del tooltip y del panel, en un solo lugar para que los dos digan
+// lo mismo. Medido, medido con denominador, estimado y sin dato son CUATRO estados
+// distintos y se leen distinto.
+function ocupTexto(r) {
+  if (r.ocup != null) {
+    return r.ocup + ' pax/vuelo'
+      + (r.vuelosConPaxPos ? ` <i>(sobre ${r.vuelosConPaxPos} de ${r.vuelos} vuelos)</i>` : '');
+  }
+  const e = r.ocupEstimada;
+  if (!e) return 'sin dato';
+  return `~${e.ocup} pax/vuelo <i>(estimada: ${Math.round(e.lf * 100)}% de ocupación del`
+       + ` histórico, sobre ${e.asientos} asientos)</i>`;
+}
+
 function msRticCandidatos() {
   const porRuta = new Map();
   for (const f of msRticFilas()) {
@@ -1304,6 +1455,11 @@ function msRticCandidatos() {
     c.aerolineas.sort((a, b) => b.m3 - a.m3);
     c.avionCodigo = c.aerolineas[0] && c.aerolineas[0].aviones[0] || null;
     c.avionEsReal = c.medidos > 0;
+    // Sin pasajeros informados la ocupacion no se puede MEDIR, pero si estimar.
+    // Va aparte y nunca pisa c.ocup: ver el comentario de _ocupHistIndice().
+    // Se calcula aca abajo y no arriba porque necesita c.avionCodigo, que sale de
+    // ordenar las aerolineas por m3 dos lineas antes.
+    c.ocupEstimada = (c.ocup == null) ? ocupacionEstimada(c) : null;
     out.push(c);
   }
   out.sort((a, b) => (a.o + a.d).localeCompare(b.o + b.d));
@@ -1705,8 +1861,10 @@ function openRouteDetail(routeKey) {
   document.getElementById('rd-pax').textContent = route.vuelosConPaxPos
     ? `${(route.pax || 0).toLocaleString('es-AR')} (en ${route.vuelosConPaxPos} de ${route.vuelos})`
     : 'ningún vuelo informó';
+  // Mismo criterio que el tooltip, sin el desagregado de vuelos que no entra en la fila.
   document.getElementById('rd-ocup').textContent = route.ocup != null
-    ? `${route.ocup} pax/vuelo` : 'sin dato';
+    ? `${route.ocup} pax/vuelo`
+    : (route.ocupEstimada ? `~${route.ocupEstimada.ocup} pax/vuelo (estimada)` : 'sin dato');
   document.getElementById('rd-dist').textContent = route.distanciaKm != null
     ? `${route.distanciaKm.toLocaleString('es-AR')} km` : 'N/D';
 
@@ -2201,8 +2359,7 @@ function render(skipListRebuild) {
             (r.aerolineas ? msRticTooltip(r) : '') +
             `${r.o} → ${r.d}<br>Vuelos: ${r.vuelos.toLocaleString('es-AR')}` +
             paxConDato(r) +
-            `<br>Ocupación: ${r.ocup != null ? r.ocup + ' pax/vuelo' : 'sin dato'}` +
-            (r.ocup != null && r.vuelosConPaxPos ? ` <i>(sobre ${r.vuelosConPaxPos} de ${r.vuelos} vuelos)</i>` : '') +
+            `<br>Ocupación: ${ocupTexto(r)}` +
             (r.avion ? `<br>Avión asignado: ${r.avion} (${r.asientos||0} asientos)` +
               (r.loadFactor != null ? ` — ${(r.loadFactor*100).toLocaleString('es-AR',{maximumFractionDigits:0})}% de ocupación` : '') +
               `<br>Consumo est./vuelo: ${(r.consumoKg||0).toLocaleString('es-AR',{maximumFractionDigits:0})} kg (${(r.consumoM3||0).toLocaleString('es-AR',{maximumFractionDigits:2})} m³)` +
