@@ -62,7 +62,16 @@ FORMATO = 1
 HOJA_PARTIDAS = 'partidas'
 HOJA_META = 'meta'
 
-NOMBRE_ARCHIVO = 'ms_partidas.xlsx'
+# UN NOMBRE FIJO QUE SE PISA, desde el 2026-09-10. Actualizar los datos de la terminal
+# es reemplazar este archivo y nada mas: no hay que borrar el anterior ni acordarse de
+# ningun formato de fecha. La fecha de los datos NO se pierde por eso -- viaja en la
+# hoja `meta` (`hasta`), que es de donde sale el cartel del filtro, en ambar cuando el
+# archivo quedo viejo. Ponerla ademas en el nombre daba dos fuentes para el mismo dato.
+#
+# Va en MAYUSCULAS y con espacio porque asi se llama en la biblioteca compartida, y el
+# nombre que ve la gente y el que busca el codigo tienen que ser el mismo. La busqueda
+# igual es case-insensitive y acepta el nombre viejo (ver PREFIJOS en importar_ms.py).
+NOMBRE_ARCHIVO = 'BAJADA MAPA.xlsx'
 
 # Las columnas que viajan, en orden. Son las que `msrtic` consume mas las que
 # `aa2000.guardar()` no degrada: no va todo `vuelo_oficial` porque la mitad son campos de

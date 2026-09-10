@@ -1463,10 +1463,23 @@ def api_msrtic_export():
         resp = make_response(datos)
         resp.headers['Content-Type'] = ('application/vnd.openxmlformats-officedocument'
                                         '.spreadsheetml.sheet')
-        # El nombre lleva la fecha para que en el SharePoint no se pisen dos descargas del
-        # mismo dia sin que nadie lo note; el mapa busca por prefijo, no por nombre exacto.
+        # ESTO ANTES LLEVABA LA FECHA EN EL NOMBRE, para que dos descargas del mismo dia no
+        # se pisaran en el SharePoint sin que nadie lo notara. Se dio vuelta a pedido, el
+        # 2026-09-10, porque el circuito real es al reves: en la terminal hay UN archivo
+        # ("BAJADA MAPA") que se pisa con la bajada nueva, y ese pisar ES la actualizacion.
+        # Con la fecha en el nombre, cada descarga dejaba un archivo mas en la biblioteca y
+        # habia que borrar los viejos a mano o convivir con veinte. Ahora el archivo baja
+        # ya con el nombre que va a tener alla: se arrastra y listo, sin renombrar.
+        #
+        # La garantia que daba la fecha no se pierde: la hoja `meta` trae `hasta`, el mapa
+        # lo muestra al lado del filtro y lo pinta en ambar desde el dia siguiente. O sea
+        # que un archivo viejo se sigue viendo viejo -- por su contenido, que es mas dificil
+        # de falsear que su nombre.
+        #
+        # El filename va ENTRE COMILLAS porque tiene un espacio: sin ellas el navegador
+        # corta en "BAJADA" y el archivo baja sin extension.
         resp.headers['Content-Disposition'] = (
-            'attachment; filename=ms_partidas_%s.xlsx' % _t.strftime('%Y%m%d_%H%M'))
+            'attachment; filename="%s"' % intercambio_ms.NOMBRE_ARCHIVO)
         return resp
     except Exception as e:
         app.logger.warning('export MS RTIC fallo: %s: %s', type(e).__name__, e)
