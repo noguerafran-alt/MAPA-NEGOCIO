@@ -59,6 +59,7 @@ import proyeccion_archivo
 try:
     import cargar_excel
     import intercambio_ms
+    import bajada
     import msrtic
     import proveedores
     import quien_cargo
@@ -66,7 +67,10 @@ try:
     sondeo.arrancar()
     MSRTIC_ERROR = None
 except Exception as _e:                                  # pragma: no cover
-    cargar_excel = intercambio_ms = msrtic = proveedores = quien_cargo = sondeo = None
+    # `bajada` va en esta lista: sin eso, si el import falla el nombre nunca se liga y
+    # /api/bajada.zip muere con NameError en vez del 503 que explica que paso.
+    bajada = cargar_excel = intercambio_ms = msrtic = proveedores = None
+    quien_cargo = sondeo = None
     MSRTIC_ERROR = '%s: %s' % (type(_e).__name__, _e)
 
 app = Flask(__name__)
@@ -1404,6 +1408,100 @@ def rutas_empresas_xlsx():
                                     '.spreadsheetml.sheet')
     resp.headers['Content-Disposition'] = (
         'attachment; filename=rutas-empresas-%s.xlsx' % _t.strftime('%Y%m%d'))
+    return resp
+
+
+@app.route('/api/bajada.zip')
+def api_bajada():
+    """TODO lo que la terminal necesita, en un archivo: historico, proveedores y partidas.
+
+    POR QUE NO ALCANZABA CON EL EXCEL. El de abajo lleva 20 columnas de `vuelo_oficial` y
+    nada mas: no lleva el historico de ANAC ni la tabla de proveedores. O sea que cambiar
+    un proveedor aca no llegaba NUNCA a la terminal, y su historico seguia siendo el del
+    zip con que se instalo. Es el hueco que este endpoint tapa.
+
+    MISMA AUTORIZACION QUE EL EXCEL, y por el mismo motivo: quien pega aca es un script y
+    no puede hacer el OAuth de Google. Pero esto lleva mas que el otro, asi que vale
+    repetir que las tablas sensibles NO viajan -- `bajada.TABLAS_ESPEJO` es una lista
+    BLANCA y `fuel_sale`, `app_user`, `fuel_sale_upload_log` y `admin_file` no estan.
+    """
+    if not _token_export_ok() and nivel_actual() < 1:
+        return jsonify({'error': 'No autorizado. Con sesion de nivel 1, o con '
+                                 '?token= si MS_EXPORT_TOKEN esta configurada.'}), 401
+    if bajada is None:
+        return jsonify({'error': 'modulo bajada no disponible'}), 503
+    import sqlite3
+    import json as _json
+    import time as _t
+
+    uri = app.config.get('SQLALCHEMY_DATABASE_URI') or ''
+    if not uri.startswith('sqlite'):
+        # En Render la base es el SQLite del disco; el fallback a Postgres existe pero
+        # este armador lee sqlite. Decirlo es mejor que tirar un error de driver.
+        return jsonify({'error': 'la bajada se arma desde SQLite y esta instancia usa %s'
+                                 % uri.split(':', 1)[0]}), 503
+    ruta_base = uri.split('sqlite:///', 1)[-1]
+    if not os.path.exists(ruta_base):
+        return jsonify({'error': 'no encuentro la base en %s' % ruta_base}), 503
+
+    con = con_part = None
+    try:
+        con = sqlite3.connect('file:%s?mode=ro' % ruta_base.replace(os.sep, '/'), uri=True)
+
+        # Las partidas y los proveedores son OPCIONALES: sin poller todavia, o sin
+        # planilla cargada, la bajada igual sirve -- lleva el historico, que es lo que la
+        # terminal no tenia forma de actualizar. Fallar entera seria peor.
+        hasta = hasta_epoch = None
+        if msrtic is not None:
+            try:
+                b = msrtic.base_oficial()
+                if b and os.path.exists(b):
+                    con_part = sqlite3.connect(
+                        'file:%s?mode=ro' % b.replace(os.sep, '/'), uri=True)
+                    fila = con_part.execute('SELECT MAX(real_epoch) FROM vuelo_oficial '
+                                            'WHERE real_epoch IS NOT NULL').fetchone()
+                    hasta_epoch = fila[0] if fila else None
+            except Exception:                            # noqa: BLE001
+                con_part = None
+
+        prov = None
+        if msrtic is not None:
+            try:
+                p = msrtic.tabla_proveedores()
+                if p and os.path.exists(p):
+                    with io.open(p, encoding='utf-8-sig') as f:
+                        prov = _json.load(f)
+            except Exception:                            # noqa: BLE001
+                prov = None
+
+        if hasta_epoch:
+            hasta = _t.strftime('%Y-%m-%dT%H:%M:%S', _t.localtime(hasta_epoch))
+        datos = bajada.escribir(con, proveedores=prov, con_partidas=con_part,
+                                meta={'hasta': hasta, 'hasta_epoch': hasta_epoch,
+                                      'origen': 'mapa-negocio web'})
+    except ValueError as e:
+        # 409 y no 500: no es que el servidor se rompio, es que esta instancia no tiene
+        # con que armar la bajada (tipicamente, sin historico). El mensaje ya lo explica
+        # y quien lo lee puede hacer algo al respecto.
+        app.logger.warning('bajada rechazada: %s', e)
+        return jsonify({'error': str(e)}), 409
+    except Exception as e:                               # noqa: BLE001
+        app.logger.warning('bajada fallo: %s: %s', type(e).__name__, e)
+        return jsonify({'error': '%s: %s' % (type(e).__name__, e)}), 500
+    finally:
+        for c in (con, con_part):
+            try:
+                if c is not None:
+                    c.close()
+            except Exception:                            # noqa: BLE001
+                pass
+
+    resp = make_response(datos)
+    resp.headers['Content-Type'] = 'application/zip'
+    # Entre comillas porque el nombre tiene un espacio: sin ellas el navegador corta en
+    # "BAJADA" y el archivo baja sin extension.
+    resp.headers['Content-Disposition'] = (
+        'attachment; filename="%s"' % bajada.NOMBRE_ARCHIVO)
     return resp
 
 
