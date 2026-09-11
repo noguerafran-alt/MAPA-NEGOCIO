@@ -405,7 +405,7 @@
          title="Consumo calculado con las partidas que publica Aeropuertos Argentina hoy, no con el histórico de ANAC. Es la única vista que abre cada ruta en las aerolíneas que la operan.">
       <button id="btn-aviones" class="toggle-btn" onclick="toggleAviones()"
               title="Posición ESTIMADA a partir de la hora de despegue y la velocidad del tipo de avión. No es seguimiento por ADS-B.">Aviones en vuelo</button>
-      <span id="aviones-sub" style="display:none; font-size:12px; color:#9aa4c7; margin-left:6px;"></span>
+      <span id="aviones-sub" style="display:none; font-size:12px; color:#9aa4c7; margin-left:6px; white-space:nowrap;"></span>
       <button id="btn-msrtic" class="toggle-btn" onclick="toggleMsRtic()">MS RTIC</button>
       <span id="msrtic-sub" style="display:none;">
         <label for="btn-msrtic-ypf" style="margin-left:6px;">Mostrar:</label>
@@ -2329,11 +2329,16 @@ function actualizarAvisoProyeccion({ proy, real, vacios }) {
 // minutos en vez de uno por cuadro: en Render, que corre con un solo worker, esa
 // diferencia es la que decide si esto se puede tener prendido.
 const AVIONES_REFRESCO_MS = 120000;   // cada cuánto se vuelven a pedir al servidor
-const AVIONES_TICK_MS = 2000;         // cada cuánto se recalcula la posición, local
+// 300 ms y no 2 s: a 2 segundos el movimiento se ve a saltos en cuanto uno hace
+// zoom. Medido en Plotly 2.32 con 150 aviones -- mas de los 47 del pico real --
+// cada recalculo cuesta 23 ms, asi que tres por segundo son ~70 ms de CPU por
+// segundo y no se nota. Es trabajo del navegador: el servidor no se entera.
+const AVIONES_TICK_MS = 300;          // cada cuánto se recalcula la posición, local
 let avionesActivo = false;
 let avionesDatos = [];
 let avionesPidiendo = false;
 let avionesMotivo = '';
+let avionesUltimaPartida = 0;   // para poder decir si el dato quedó viejo
 
 function toggleAviones() {
   avionesActivo = !avionesActivo;
@@ -2375,6 +2380,7 @@ function cargarAviones() {
   return fetch('/api/en-el-aire').then(r => r.json()).then(d => {
     if (d && d.disponible) {
       avionesDatos = d.vuelos || [];
+      avionesUltimaPartida = (d.estado || {}).ultima_partida_epoch || 0;
       avionesMotivo = '';
     } else {
       avionesDatos = [];
@@ -2424,12 +2430,31 @@ function avionesTexto(a) {
   return s;
 }
 
+// EL CARTEL NO PUEDE MOVER EL MAPA. Vive en la barra de arriba, y render() calcula
+// el encuadre a partir del alto que le queda al mapa: si este texto crece y la barra
+// pasa a dos renglones, el mapa se reencuadra solo. Por eso va en una sola línea
+// (nowrap) y se escribe SÓLO cuando cambia — escribirlo en cada vuelta es tocar el DOM
+// tres veces por segundo para dejarlo igual.
+let avionesCartelUltimo = '';
 function avionesCartel(n) {
   const el = document.getElementById('aviones-sub');
   if (!el) return;
-  el.textContent = avionesMotivo
-    ? avionesMotivo
-    : n + ' en vuelo · posición estimada, no es seguimiento';
+  const edad = avionesEdadTexto();
+  const s = avionesMotivo ? avionesMotivo : (n + ' en vuelo · estimado' + edad);
+  if (s === avionesCartelUltimo) return;
+  avionesCartelUltimo = s;
+  el.textContent = s;
+  el.style.color = edad ? '#ffd98a' : '#9aa4c7';
+}
+
+// DE CUÁNDO ES EL DATO, y sólo si está viejo. Un cielo sin cabotaje se lee como que el
+// filtro no los muestra, y es otra cosa: un vuelo de cabotaje dura 1 o 2 horas, así que
+// con las partidas atrasadas tres horas ya aterrizaron todos y quedan sólo los largos.
+function avionesEdadTexto() {
+  if (!avionesUltimaPartida) return '';
+  const h = (Date.now() / 1000 - avionesUltimaPartida) / 3600;
+  if (h < 1.5) return '';
+  return ' · última partida registrada hace ' + h.toFixed(1) + ' h';
 }
 
 // El trace va DENTRO de render() para que sobreviva a cada redibujado del mapa; el tick
@@ -2446,7 +2471,10 @@ function empujarAviones(traces) {
     lon: a.map(x => x.lon),
     marker: {
       size: 11,
-      symbol: 'triangle-up',
+      // Lo mas parecido a un avion que tiene Plotly. Se compararon los 324
+      // simbolos de la 2.32: triangle-up se lee como un triangulo y arrow-wide
+      // como una flecha en punta, que con el rumbo aplicado pasa por avion.
+      symbol: 'arrow-wide',
       angle: a.map(x => x.rumbo),
       angleref: 'up',
       color: '#ffd98a',

@@ -623,6 +623,13 @@ def en_el_aire(ahora=None, horas=36.0):
             'pax': pax,
         })
 
+    # DE CUANDO ES EL DATO. Sin esto, un cielo sin cabotaje se lee como un bug del
+    # filtro, y es otra cosa: los vuelos de cabotaje duran 1 o 2 horas, asi que con la
+    # base atrasada 3 horas ya aterrizaron todos y solo quedan los de larga distancia.
+    # Medido: con el dato al dia hay 47 en vuelo, 34 de ellos de cabotaje; con 3,2 horas
+    # de atraso quedan 4, todos internacionales.
+    est['ultima_partida_epoch'] = max((p.get('real_epoch') or 0 for p in crudas),
+                                      default=0) or None
     est['en_el_aire'] = len(vuelos)
     # El mas lejos de llegar primero: con muchos encimados, el orden decide cual queda
     # arriba, y conviene que sea el que mas tiempo va a seguir ahi.
