@@ -679,10 +679,28 @@ function pintar(d) {
   const provs = Object.entries(d.por_proveedor || {})
     .map(([p, n]) => ({ p, n }))
     .concat(sinRes ? [{ p: null, n: sinRes }] : []);
+  /* LOS PASAJEROS DE UN PROVEEDOR, CON SU COBERTURA PEGADA AL NUMERO.
+     Nunca se muestra la suma sola: AA2000 publica pasajeros en una minoria de las
+     partidas, asi que "YPF movio 24.000" se leeria como el total del mercado siendo una
+     fraccion -- el mismo error de denominador que ya hizo publicar dos veces un share
+     equivocado en esta misma pantalla. El "(de N)" no es un detalle de estilo: es lo que
+     hace que el numero se pueda leer sin equivocarse. */
+  function celdaPaxProv(f) {
+    const x = (d.pax_por_proveedor || {})[f.p];
+    if (!x || !x.vuelos_con_pax)
+      return `<span class="muted" title="Ninguna partida de este proveedor trajo pasajeros informados">sin dato</span>`;
+    const cob = (x.vuelos_con_pax / Math.max(x.vuelos, 1)) * 100;
+    return `${x.pasajeros.toLocaleString("es-AR")} ` +
+      `<span class="muted" title="AA2000 informó pasajeros en ${x.vuelos_con_pax} de las ` +
+      `${x.vuelos} partidas de este proveedor. El total es de esas, no de todas.">` +
+      `(de ${x.vuelos_con_pax}/${x.vuelos}, ${cob.toFixed(0)}%)</span>`;
+  }
+
   tabla(document.getElementById("t-prov"), [
     { t: "Proveedor", v: (f) => chip(f.p) },
     { t: "Partidas", num: true, v: (f) => f.n },
     { t: "%", num: true, v: (f) => ((f.n / total) * 100).toFixed(1) + "%" },
+    { t: "Pasajeros informados", num: true, v: (f) => celdaPaxProv(f) },
     { t: "", v: (f) => `<div class="barra"><i class="${clase(f.p)}"` +
                        ` style="width:${(f.n / total) * 100}%"></i></div>` },
   ], provs);

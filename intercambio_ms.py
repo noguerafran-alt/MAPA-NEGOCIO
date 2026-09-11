@@ -85,6 +85,23 @@ COLUMNAS = ('id', 'aeropuerto', 'movimiento', 'numero', 'aerolinea_id', 'aerolin
 # traiga se rechaza entero en vez de importar filas a medias.
 IMPRESCINDIBLES = ('id', 'aeropuerto', 'movimiento', 'otro_aeropuerto')
 
+# CAMPOS DONDE UN 0 GUARDADO SIGNIFICA "TODAVIA NO SE SABE", asi que se puede completar.
+# Tiene que coincidir con aa2000.CERO_ES_VACIO; la seccion 22 de verificar.py falla si no.
+CERO_ES_VACIO = ('pasajeros',)
+
+
+def _falta(campo, valor):
+    """Si ese campo esta vacio Y POR LO TANTO SE PUEDE COMPLETAR.
+
+    EL 0 DE `pasajeros` BLOQUEABA EL DATO REAL PARA SIEMPRE, y era el bug mas caro de los
+    dos: la regla generica era `actual.get(k) in (None, '')`, y un 0 no esta en esa tupla,
+    asi que una fila guardada en cero no se completaba nunca. Medido el 2026-09-11: 881 de
+    las 1.169 partidas con el campo estaban en cero, o sea que NINGUNA bajada ni Excel
+    podia ponerles el numero de verdad -- y no fallaba nada, simplemente el dato no
+    aparecia jamas.
+    """
+    return valor is None or valor == '' or (campo in CERO_ES_VACIO and valor == 0)
+
 
 def _valor_excel(v):
     """Lo que openpyxl puede escribir sin quejarse."""
@@ -211,8 +228,9 @@ def importar(filas, conn):
 
         actual = dict(zip([d[0] for d in cur.description], previa))
         # Solo se completa lo que falta. Un valor presente no se toca ni siquiera si el
-        # archivo trae otro: el archivo puede ser mas viejo que la base.
-        cambios = {k: v for k, v in usables.items() if actual.get(k) in (None, '')}
+        # archivo trae otro: el archivo puede ser mas viejo que la base. "Falta" incluye
+        # el 0 de pasajeros, que es "no informado" y no un valor -- ver _falta().
+        cambios = {k: v for k, v in usables.items() if _falta(k, actual.get(k))}
         if not cambios:
             r['sin_cambio'] += 1
             continue

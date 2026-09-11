@@ -266,12 +266,36 @@ def resumen(filas: list[dict]) -> dict:
     por_prov: dict[str, int] = {}
     por_motivo: dict[str, int] = {}
     sin_resolver = []
+    # PASAJEROS POR PROVEEDOR, Y SIEMPRE CON SU COBERTURA AL LADO.
+    #
+    # Va en un dict APARTE y no adentro de por_prov a proposito: por_prov es
+    # {proveedor: cantidad} y de esa forma depende la guarda del denominador de mas
+    # abajo, que es lo que evito publicar dos veces un share equivocado. Un dato nuevo no
+    # justifica cambiarle la forma a la estructura que sostiene el chequeo.
+    #
+    # `vuelos` es el denominador y NO es decorativo: AA2000 publica pasajeros en una
+    # minoria de las partidas -- medido el 2026-09-11, 288 de 1.744 traen un numero de
+    # verdad, el 17% -- asi que la suma sola se leeria como el total del mercado siendo
+    # una fraccion. Es el mismo error de denominador que este archivo ya documenta dos
+    # veces. Por eso el numero y su cobertura viajan juntos: quien quiera mostrar uno
+    # tiene el otro al alcance y no hay excusa para separarlos.
+    #
+    # Un 0 NO cuenta como informado: en este campo significa "todavia no lo publicaron"
+    # (ver _pasajeros() y CERO_ES_VACIO en aa2000.py).
+    pax_prov: dict[str, dict] = {}
     for f in filas:
         por_motivo[f["motivo"]] = por_motivo.get(f["motivo"], 0) + 1
         if f["proveedor"]:
             por_prov[f["proveedor"]] = por_prov.get(f["proveedor"], 0) + 1
         else:
             sin_resolver.append(f)
+        clave = f["proveedor"] or "sin_resolver"
+        d = pax_prov.setdefault(clave, {"pasajeros": 0, "vuelos_con_pax": 0, "vuelos": 0})
+        d["vuelos"] += 1
+        p = f.get("pasajeros")
+        if p:
+            d["pasajeros"] += p
+            d["vuelos_con_pax"] += 1
     # Las rutas que le faltan a la planilla, con cuantas partidas cuesta cada
     # una: es la lista para pedirle a YPF, ordenada por lo que mas conviene
     # completar primero.
@@ -363,6 +387,9 @@ def resumen(filas: list[dict]) -> dict:
         # porcentajes que no cierran.
         "denominador_inconsistente": inconsistente,
         "por_proveedor": dict(sorted(por_prov.items(), key=lambda kv: -kv[1])),
+        # {proveedor: {pasajeros, vuelos_con_pax, vuelos}}. El numero NUNCA sin el
+        # denominador: ver el comentario de pax_prov arriba.
+        "pax_por_proveedor": pax_prov,
         "por_motivo": dict(sorted(por_motivo.items(), key=lambda kv: -kv[1])),
         "n_sin_resolver": len(sin_resolver),
         "rutas_sin_declarar": dict(sorted(faltan.items(),

@@ -120,6 +120,22 @@ CREATE INDEX IF NOT EXISTS idx_oficial_mov  ON vuelo_oficial (aeropuerto, movimi
 NO_DEGRADAR = ("real", "real_epoch", "matricula", "pasajeros", "estado",
                "posicion", "puerta", "cinta")
 
+# EN ESTOS CAMPOS UN 0 NO ES UN VALOR: ES "NO INFORMADO", Y TAMPOCO PUEDE PISAR.
+#
+# La regla ya existia en _pasajeros() -- que guarda None y 0 por separado justamente
+# porque son cosas distintas -- pero NO estaba del lado de la escritura. La guarda de
+# guardar() preguntaba solo `if v is None`, asi que un sondeo posterior que trajera "0"
+# borraba un 143 ya capturado, y el dato de pasajeros vive unas horas en el feed igual
+# que la hora real: perderlo es definitivo.
+#
+# Medido el 2026-09-11 sobre esta base: de 1.169 partidas con el campo, 881 vienen en
+# cero. O sea que el caso no es raro -- es el caso normal.
+#
+# TIENE QUE COINCIDIR CON intercambio_ms.CERO_ES_VACIO. Estan duplicadas a proposito
+# (aa2000 no depende de intercambio_ms y asi sigue) y la seccion 22 de verificar.py falla
+# si dejan de coincidir.
+CERO_ES_VACIO = ("pasajeros",)
+
 
 def _pedir(endpoint: str, **params) -> list | dict:
     """GET al gateway, con la cabecera que exige."""
@@ -301,7 +317,14 @@ def guardar(conn: sqlite3.Connection, filas: list[dict], ahora: float | None = N
             anterior = previa[k]
             # La regla que hace que esto sirva: lo que ya se sabe no se pierde
             # porque el feed lo dejo de mandar. Ver NO_DEGRADAR.
-            if v is None and k in NO_DEGRADAR and anterior is not None:
+            #
+            # Y un 0 en los campos de CERO_ES_VACIO cuenta como "no mando nada": sin esa
+            # mitad, un sondeo con "0" pisaba los pasajeros ya capturados. Ojo con el
+            # orden de la condicion -- `anterior` tiene que ser MAYOR a cero para que el 0
+            # se descarte; si lo anterior tambien era 0 o None, el 0 entra normal y queda
+            # registrado que el feed contesto.
+            if k in NO_DEGRADAR and anterior is not None and (
+                    v is None or (k in CERO_ES_VACIO and not v and anterior)):
                 continue
             if v != anterior:
                 cambios[k] = v
