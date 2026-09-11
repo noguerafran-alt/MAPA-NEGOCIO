@@ -251,6 +251,23 @@ function esc(v) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+/* LOS PASAJEROS QUE PUBLICA AA2000, DISTINGUIENDO CERO DE NO INFORMADO.
+   No es una sutileza de presentacion: son dos cosas distintas y el feed manda las dos.
+   Medido sobre las 1.744 partidas de esta base -- 1.169 traen el campo, pero 881 de esas
+   vienen en CERO y solo 288 traen un numero de verdad. Un cero ahi es casi seguro
+   "todavia no lo informaron" y no "volo vacio" (ver _pasajeros() en aa2000.py, que es el
+   que decide guardar NULL o 0 en vez de aplastar los dos casos).
+
+   Mostrar "0" a secas seria afirmar que ese vuelo salio vacio: falso, y ademas creible
+   -- 881 filas en cero se leen como una flota fantasma. */
+function celdaPasajeros(f) {
+  if (f.pasajeros == null)
+    return `<span class="muted" title="El feed de AA2000 no trajo el campo para este vuelo">-</span>`;
+  if (f.pasajeros === 0)
+    return `<span class="muted" title="El feed manda 0, que en este campo es casi seguro «todavía no informado» y no «voló vacío». Por eso no se muestra como cero.">sin dato</span>`;
+  return f.pasajeros.toLocaleString("es-AR");
+}
+
 function fecha(e) {
   if (!e) return "-";
   const d = new Date(e * 1000);
@@ -698,11 +715,27 @@ function pintar(d) {
     { t: "Proveedor", v: (f) => chip(f.proveedor) },
     { t: "Por qué", v: (f) => `<span class="motivo">${esc(f.motivo)}</span>` },
     { t: "Matrícula", v: (f) => esc(f.matricula) || '<span class="muted">-</span>' },
+    // El dato ya venia en el payload y en el CSV desde siempre; lo unico que faltaba era
+    // mostrarlo. Va ultimo porque acompania a la matricula: las dos son lo que el feed
+    // publica del vuelo en si, no de la carga de combustible.
+    { t: "Pasajeros", num: true, v: (f) => celdaPasajeros(f) },
   ], d.vuelos || []);
 
-  const n = d.n_vuelos_total || 0, m = (d.vuelos || []).length;
+  const n = d.n_vuelos_total || 0, vis = d.vuelos || [], m = vis.length;
+  // CUANTAS INFORMARON, AL LADO DE LA COLUMNA. Sin el denominador, una columna llena de
+  // "sin dato" se lee como que el sistema esta roto, cuando lo que pasa es que AA2000
+  // publica pasajeros en una minoria de las partidas. Con el numero al lado se lee como
+  // lo que es: cobertura parcial de la fuente.
+  const conPax = vis.filter((f) => f.pasajeros > 0).length;
+  const sumaPax = vis.reduce((a, f) => a + (f.pasajeros > 0 ? f.pasajeros : 0), 0);
+  const notaPax = conPax
+    ? ` <b>${conPax}</b> de esas informaron pasajeros ` +
+      `(${((conPax / Math.max(m, 1)) * 100).toFixed(0)}%), ` +
+      `<b>${sumaPax.toLocaleString("es-AR")}</b> en total — ` +
+      `<span class="muted">AA2000 no los publica para todos los vuelos.</span>`
+    : "";
   document.getElementById("nota-vuelos").innerHTML =
-    `Se muestran ${m} de ${n} partidas${m < n ? " (las más recientes)" : ""}. ` +
+    `Se muestran ${m} de ${n} partidas${m < n ? " (las más recientes)" : ""}.${notaPax} ` +
     `El detalle completo va en <a href="/quien-cargo.csv">quien-cargo.csv</a>, ` +
     `que abre directo en Excel.`;
 }
