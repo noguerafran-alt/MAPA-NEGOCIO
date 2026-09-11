@@ -497,6 +497,140 @@ def calcular(horas=24.0, coords=None, dia=None, desde=None, hasta=None):
     return filas_out, est
 
 
+# CUANTO TARDA UN VUELO, aproximado. La velocidad de crucero NO es la velocidad
+# promedio: el rodaje, el ascenso y el descenso son mucho mas lentos, asi que volar toda
+# la distancia a crucero deja al avion adelantado. Se le suma un margen fijo por las dos
+# puntas.
+#
+# Es una aproximacion y se dice que lo es. No hay plan de vuelo ni viento: la ruta real
+# sigue aerovias y es mas larga que la recta, y en Ezeiza-Madrid el jet stream cambia el
+# tiempo de vuelo casi una hora segun la direccion. Esta aparte y con nombre para poder
+# calibrarlo el dia que se compare contra horas de arribo reales.
+MARGEN_PUNTAS_H = 25.0 / 60.0
+
+
+def en_el_aire(ahora=None, horas=36.0):
+    """Los vuelos que, segun la hora de despegue MEDIDA, todavia estarian volando.
+
+    ESTO NO ES SEGUIMIENTO: es navegacion a estima. FlightRadar dibuja donde el avion
+    DICE que esta, por ADS-B; esto dibuja donde deberia estar segun cuando salio y a que
+    velocidad vuela su tipo. Un avioncito sobre un mapa es la afirmacion mas literal que
+    existe de "esta aca", asi que cada vuelo viaja con lo que hace falta para que la
+    pantalla lo diga: `estimado: True` y de donde sale cada pieza.
+
+    SOLO LAS QUE DESPEGARON CON HORA MEDIDA (`estado_partida() == 'despego'`). Sin un
+    instante de salida no hay donde poner el avion, y ponerlo en la hora programada seria
+    dibujar con precision de minutos algo que puede estar demorado media hora -- hay 31
+    "Demorado" en el feed. Las que quedan afuera se cuentan y se informan: son el 32%.
+
+    La posicion NO se calcula aca. Se mandan las dos puntas y los dos instantes, y el
+    navegador interpola con su reloj: asi el avion se mueve solo, con UN pedido cada
+    tanto en vez de uno por cuadro. En Render, que corre con un solo worker, esa
+    diferencia es la que decide si esto se puede tener prendido.
+    """
+    import time as _t
+    try:
+        import quien_cargo as _qc
+        estado_de = _qc.estado_partida
+    except Exception:                                    # noqa: BLE001
+        # Sin el modulo se cae a lo unico que se puede afirmar solo: que hay hora medida.
+        estado_de = lambda p: 'despego' if p.get('real_epoch') else 'otro'   # noqa: E731
+
+    ahora = float(ahora if ahora is not None else _t.time())
+    iata = _cargar_iata()
+    coords = _coords()
+    crudas = _partidas(horas)
+
+    mats = {_norm_matricula(p.get('matricula')) for p in crudas}
+    mats.discard('')
+    tipos = _tipos_por_matricula(mats)
+    flota = avion_model.get_flota()
+
+    est = {'partidas': len(crudas), 'despegadas': 0, 'en_el_aire': 0,
+           'sin_hora_medida': 0, 'sin_ruta': 0, 'aterrizados': 0,
+           'avion_medido': 0, 'avion_desconocido': 0, 'con_pax': 0,
+           'iata_desconocidos': {}}
+    vuelos = []
+
+    for p in crudas:
+        if estado_de(p) != 'despego':
+            est['sin_hora_medida'] += 1
+            continue
+        salida = p.get('real_epoch')
+        if not salida:
+            est['sin_hora_medida'] += 1
+            continue
+        est['despegadas'] += 1
+
+        cod_o = (p.get('aeropuerto') or '').strip().upper()
+        cod_d = (p.get('otro_aeropuerto') or '').strip().upper()
+        origen, destino = iata.get(cod_o), iata.get(cod_d)
+        if not origen or not destino:
+            # Misma regla que el resto del modulo: un IATA que no esta no se adivina.
+            est['sin_ruta'] += 1
+            for cod in (cod_o, cod_d):
+                if cod and cod not in iata:
+                    est['iata_desconocidos'][cod] = est['iata_desconocidos'].get(cod, 0) + 1
+            continue
+        o_nombre, d_nombre = origen[0], destino[0]
+        if o_nombre == d_nombre:
+            est['sin_ruta'] += 1
+            continue
+        c_o, c_d = coords.get(o_nombre), coords.get(d_nombre)
+        if not c_o or not c_d:
+            est['sin_ruta'] += 1
+            continue
+        dist = avion_model.haversine(c_o[0], c_o[1], c_d[0], c_d[1])
+
+        # EL AVION, y de donde sale. Por matricula es un dato; sin matricula queda la
+        # velocidad generica, y eso cambia cuanto tarda -- asi que se marca.
+        codigo = tipos.get(_norm_matricula(p.get('matricula')))
+        ficha = flota.get(codigo) if codigo else None
+        if ficha:
+            est['avion_medido'] += 1
+        else:
+            est['avion_desconocido'] += 1
+        vel = (ficha or {}).get('velocidad_crucero_kmh') or 830.0
+        duracion = (MARGEN_PUNTAS_H + dist / float(vel)) * 3600.0
+        llegada = salida + duracion
+        if ahora >= llegada:
+            est['aterrizados'] += 1
+            continue
+        if ahora < salida:
+            continue                    # despego "en el futuro": reloj o dato raro
+
+        pax = p.get('pasajeros')
+        try:
+            pax = int(pax) if pax not in (None, '') else None
+        except (TypeError, ValueError):
+            pax = None
+        # Un 0 de este feed es "no informado", no cero pasajeros. Ya costo una vez.
+        if not pax:
+            pax = None
+        else:
+            est['con_pax'] += 1
+
+        vuelos.append({
+            'numero': p.get('numero'), 'aerolinea': p.get('aerolinea'),
+            'aerolinea_id': p.get('aerolinea_id'), 'matricula': p.get('matricula'),
+            'avion': (ficha or {}).get('nombre') or codigo,
+            'avion_medido': bool(ficha),
+            'origen': o_nombre, 'destino': d_nombre,
+            'olat': c_o[0], 'olon': c_o[1], 'dlat': c_d[0], 'dlon': c_d[1],
+            'distancia_km': round(dist, 1),
+            'salida_epoch': salida, 'llegada_epoch': llegada,
+            'velocidad_kmh': round(float(vel)),
+            'pax': pax,
+        })
+
+    est['en_el_aire'] = len(vuelos)
+    # El mas lejos de llegar primero: con muchos encimados, el orden decide cual queda
+    # arriba, y conviene que sea el que mas tiempo va a seguir ahi.
+    vuelos.sort(key=lambda v: -v['llegada_epoch'])
+    return {'vuelos': vuelos, 'estado': est, 'ahora_epoch': ahora,
+            'margen_puntas_min': round(MARGEN_PUNTAS_H * 60)}
+
+
 def _clave_de_archivo():
     """Mtime y tamano de las bases que se leen. Cambia cuando alguna se escribe.
 

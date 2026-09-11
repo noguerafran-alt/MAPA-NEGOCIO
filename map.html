@@ -403,6 +403,9 @@
          grupo entero queda oculto y el mapa es exactamente el de siempre. -->
     <div class="ctrl-group" id="grupo-msrtic" style="display:none;"
          title="Consumo calculado con las partidas que publica Aeropuertos Argentina hoy, no con el histórico de ANAC. Es la única vista que abre cada ruta en las aerolíneas que la operan.">
+      <button id="btn-aviones" class="toggle-btn" onclick="toggleAviones()"
+              title="Posición ESTIMADA a partir de la hora de despegue y la velocidad del tipo de avión. No es seguimiento por ADS-B.">Aviones en vuelo</button>
+      <span id="aviones-sub" style="display:none; font-size:12px; color:#9aa4c7; margin-left:6px;"></span>
       <button id="btn-msrtic" class="toggle-btn" onclick="toggleMsRtic()">MS RTIC</button>
       <span id="msrtic-sub" style="display:none;">
         <label for="btn-msrtic-ypf" style="margin-left:6px;">Mostrar:</label>
@@ -2309,6 +2312,178 @@ function actualizarAvisoProyeccion({ proy, real, vacios }) {
   }
 }
 
+// ---------- Aviones en vuelo: posición ESTIMADA, no seguimiento ----------
+// LA DIFERENCIA CON FLIGHTRADAR IMPORTA Y SE DICE EN CADA HOVER. FR24 dibuja donde el
+// avión DICE que está, por ADS-B. Esto es navegación a estima: se sabe cuándo despegó
+// (hora medida por el feed de AA2000) y a qué velocidad vuela su tipo, y de ahí sale
+// dónde DEBERÍA estar. Tres cosas lo corren y ninguna se puede corregir con este dato:
+// la ruta real sigue aerovías y es más larga que la recta, el crucero no es la velocidad
+// promedio (por eso el servidor suma un margen por ascenso y descenso), y el viento
+// cambia el tiempo de vuelo casi una hora en un Ezeiza-Madrid.
+//
+// Un avioncito sobre un mapa es la afirmación más literal que existe de "está acá", así
+// que el tooltip lo desmiente explícitamente. Sin esa línea, esto sería lindo y mentiría.
+//
+// SE ANIMA EN EL NAVEGADOR. El servidor manda las dos puntas y los dos instantes, y acá
+// se interpola con el reloj propio. Así los aviones se mueven con UN pedido cada dos
+// minutos en vez de uno por cuadro: en Render, que corre con un solo worker, esa
+// diferencia es la que decide si esto se puede tener prendido.
+const AVIONES_REFRESCO_MS = 120000;   // cada cuánto se vuelven a pedir al servidor
+const AVIONES_TICK_MS = 2000;         // cada cuánto se recalcula la posición, local
+let avionesActivo = false;
+let avionesDatos = [];
+let avionesPidiendo = false;
+let avionesMotivo = '';
+
+function toggleAviones() {
+  avionesActivo = !avionesActivo;
+  document.getElementById('btn-aviones').classList.toggle('active', avionesActivo);
+  document.getElementById('aviones-sub').style.display = avionesActivo ? '' : 'none';
+  if (avionesActivo) cargarAviones().then(() => render());
+  else { avionesDatos = []; render(); }
+}
+
+// Punto sobre el CÍRCULO MÁXIMO, no sobre la recta de la proyección. Interpolar lat/lon
+// linealmente manda el avión por otro lado en cualquier vuelo largo: un Ezeiza-Madrid
+// recto en la pantalla pasa bien al sur de donde pasa en la esfera.
+function avionPunto(lat1, lon1, lat2, lon2, f) {
+  const R = Math.PI / 180;
+  const p1 = lat1 * R, l1 = lon1 * R, p2 = lat2 * R, l2 = lon2 * R;
+  const sp = Math.sin((p2 - p1) / 2), sl = Math.sin((l2 - l1) / 2);
+  const d = 2 * Math.asin(Math.min(1, Math.sqrt(
+    sp * sp + Math.cos(p1) * Math.cos(p2) * sl * sl)));
+  if (!d) return [lat1, lon1];
+  const A = Math.sin((1 - f) * d) / Math.sin(d), B = Math.sin(f * d) / Math.sin(d);
+  const x = A * Math.cos(p1) * Math.cos(l1) + B * Math.cos(p2) * Math.cos(l2);
+  const y = A * Math.cos(p1) * Math.sin(l1) + B * Math.cos(p2) * Math.sin(l2);
+  const z = A * Math.sin(p1) + B * Math.sin(p2);
+  return [Math.atan2(z, Math.sqrt(x * x + y * y)) / R, Math.atan2(y, x) / R];
+}
+
+// Hacia dónde apunta la nariz, para rotar el marcador.
+function avionRumbo(lat1, lon1, lat2, lon2) {
+  const R = Math.PI / 180;
+  const p1 = lat1 * R, p2 = lat2 * R, dl = (lon2 - lon1) * R;
+  const y = Math.sin(dl) * Math.cos(p2);
+  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+  return (Math.atan2(y, x) / R + 360) % 360;
+}
+
+function cargarAviones() {
+  if (avionesPidiendo) return Promise.resolve();
+  avionesPidiendo = true;
+  return fetch('/api/en-el-aire').then(r => r.json()).then(d => {
+    if (d && d.disponible) {
+      avionesDatos = d.vuelos || [];
+      avionesMotivo = '';
+    } else {
+      avionesDatos = [];
+      avionesMotivo = (d && d.motivo) || 'no disponible';
+    }
+  }).catch(e => { avionesDatos = []; avionesMotivo = String(e); })
+    .then(() => { avionesPidiendo = false; });
+}
+
+// Los que siguen en el aire AHORA, con su posición. Se recalcula en cada tick: el
+// servidor no vuelve a preguntarse nada.
+function avionesAhora() {
+  const t = Date.now() / 1000;
+  const out = [];
+  for (const v of avionesDatos) {
+    if (t < v.salida_epoch || t >= v.llegada_epoch) continue;   // aterrizó o no salió
+    const f = (t - v.salida_epoch) / (v.llegada_epoch - v.salida_epoch);
+    const p = avionPunto(v.olat, v.olon, v.dlat, v.dlon, f);
+    out.push({v: v, lat: p[0], lon: p[1], f: f,
+              rumbo: avionRumbo(p[0], p[1], v.dlat, v.dlon)});
+  }
+  return out;
+}
+
+function avionesTexto(a) {
+  const v = a.v;
+  const esc = (s) => String(s == null ? '' : s).replace(/[<>&]/g, '');
+  const hora = (e) => {
+    const d = new Date(e * 1000);
+    return String(d.getHours()).padStart(2, '0') + ':'
+         + String(d.getMinutes()).padStart(2, '0');
+  };
+  let s = '<b>' + (esc(v.numero) || 'sin número') + '</b>';
+  if (v.aerolinea) s += ' · ' + esc(v.aerolinea);
+  s += '<br>' + esc(v.origen) + ' → ' + esc(v.destino);
+  // EL AVIÓN, y de dónde sale. Por matrícula es un dato; sin matrícula ni siquiera se
+  // sabe el modelo, y entonces la velocidad usada es genérica: eso cambia la posición,
+  // así que se dice.
+  s += '<br>' + (v.avion ? esc(v.avion) : '<i>avión no identificado</i>');
+  if (v.matricula) s += ' (' + esc(v.matricula) + ')';
+  if (!v.avion_medido) s += '<br><i>velocidad genérica: sin matrícula en el registro</i>';
+  // Un 0 de este feed es "no informado". Sólo 17% de las partidas traen pasajeros.
+  s += '<br>Pasajeros: ' + (v.pax ? v.pax : '<i>no informados</i>');
+  s += '<br>Despegó ' + hora(v.salida_epoch) + ' · llega ~' + hora(v.llegada_epoch);
+  s += '<br>' + Math.round(a.f * 100) + '% del trayecto · ' + v.velocidad_kmh + ' km/h';
+  s += '<br><i>Posición estimada por hora de despegue — no es seguimiento</i>';
+  return s;
+}
+
+function avionesCartel(n) {
+  const el = document.getElementById('aviones-sub');
+  if (!el) return;
+  el.textContent = avionesMotivo
+    ? avionesMotivo
+    : n + ' en vuelo · posición estimada, no es seguimiento';
+}
+
+// El trace va DENTRO de render() para que sobreviva a cada redibujado del mapa; el tick
+// después lo mueve con restyle, que es mucho más barato que rehacer todo.
+function empujarAviones(traces) {
+  if (!avionesActivo) return;
+  const a = avionesAhora();
+  avionesCartel(a.length);
+  traces.push({
+    type: 'scattergeo',
+    mode: 'markers',
+    name: 'aviones-en-vuelo',
+    lat: a.map(x => x.lat),
+    lon: a.map(x => x.lon),
+    marker: {
+      size: 11,
+      symbol: 'triangle-up',
+      angle: a.map(x => x.rumbo),
+      angleref: 'up',
+      color: '#ffd98a',
+      line: {width: 1, color: '#2a2f45'},
+    },
+    hoverinfo: 'text',
+    text: a.map(avionesTexto),
+    showlegend: false,
+  });
+}
+
+function moverAviones() {
+  if (!avionesActivo) return;
+  const gd = document.getElementById('map');
+  if (!gd || !gd.data) return;
+  let idx = -1;
+  for (let i = 0; i < gd.data.length; i++) {
+    if (gd.data[i].name === 'aviones-en-vuelo') { idx = i; break; }
+  }
+  if (idx < 0) return;            // todavía no se dibujó: lo hará el próximo render()
+  const a = avionesAhora();
+  avionesCartel(a.length);
+  Plotly.restyle('map', {
+    lat: [a.map(x => x.lat)],
+    lon: [a.map(x => x.lon)],
+    text: [a.map(avionesTexto)],
+    'marker.angle': [a.map(x => x.rumbo)],
+  }, [idx]);
+}
+
+setInterval(moverAviones, AVIONES_TICK_MS);
+// Sólo con el filtro encendido y la pestaña visible: una pestaña olvidada no tiene por
+// qué pedirle nada al server toda la noche. Mismo criterio que el resto del mapa.
+setInterval(() => {
+  if (avionesActivo && !document.hidden) cargarAviones();
+}, AVIONES_REFRESCO_MS);
+
 function render(skipListRebuild) {
   if (!DATA) return;
   const years = DATA.years.filter(y => selectedYears.has(y));
@@ -2583,6 +2758,8 @@ function render(skipListRebuild) {
       bgcolor: 'rgba(16,22,46,0.85)'
     }
   };
+
+  empujarAviones(traces);
 
   Plotly.react('map', traces, layout, { responsive: true, displaylogo: false, displayModeBar: true, doubleClick: false })
     .then(gd => {

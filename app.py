@@ -1738,6 +1738,36 @@ def api_quien_cargo_proveedor():
                     'destino': str(destino_json)})
 
 
+@app.route('/api/en-el-aire')
+@limiter.limit("30 per minute")
+def api_en_el_aire():
+    """Los vuelos que estarian en el aire ahora, para dibujarlos sobre el mapa.
+
+    NIVEL 1 como todo el mapa: /api/data ya lo exige, asi que esto no abre nada nuevo.
+    No lleva proveedor ni nada de la planilla -- son partidas publicas de AA2000 mas el
+    tipo de avion por matricula.
+
+    POSICION ESTIMADA, NO SEGUIMIENTO. La calcula el navegador interpolando entre las dos
+    puntas con su propio reloj; aca solo viajan los extremos y los dos instantes. Asi los
+    aviones se mueven con UN pedido cada tanto en vez de uno por cuadro, que en un server
+    de un solo worker es la diferencia entre poder tenerlo prendido y no.
+    """
+    if nivel_actual() < 1:
+        return jsonify({'error': 'No autorizado'}), 401
+    if msrtic is None:
+        return jsonify({'disponible': False,
+                        'motivo': 'msrtic no se pudo importar: %s' % MSRTIC_ERROR})
+    if not msrtic.disponible():
+        return jsonify({'disponible': False,
+                        'motivo': 'todavia no hay partidas grabadas'})
+    try:
+        return jsonify(dict(msrtic.en_el_aire(), disponible=True))
+    except Exception as e:                               # noqa: BLE001
+        app.logger.warning('en-el-aire fallo: %s: %s', type(e).__name__, e)
+        return jsonify({'disponible': False,
+                        'motivo': '%s: %s' % (type(e).__name__, e)})
+
+
 @app.route('/api/msrtic')
 @limiter.limit("30 per minute")
 def api_msrtic():

@@ -176,6 +176,56 @@ with app.app_context():
     _j = _r.get_json() or {}
     check('/api/msrtic no reporta un error interno',
           'error' not in _j, str(_j.get('error'))[:120])
+
+print('\n' + '--- Aviones en vuelo: posicion estimada sobre el mapa')
+# SE EJECUTA, no se importa. Es la leccion del NameError del 2026-09-10: un modulo que
+# importa bien puede tirar en la primera llamada, y verificar_deploy paso en verde
+# justamente por no llamar a nada.
+import msrtic as _msav  # noqa
+
+with app.app_context():
+    try:
+        _av = _msav.en_el_aire()
+        check('msrtic.en_el_aire() corre sin excepcion', True,
+              '%d en el aire de %d despegadas' % ((_av['estado'] or {}).get('en_el_aire', -1),
+                                                  (_av['estado'] or {}).get('despegadas', -1)))
+    except Exception as _e:
+        _av = {'vuelos': []}
+        check('msrtic.en_el_aire() corre sin excepcion', False,
+              '%s: %s' % (type(_e).__name__, _e))
+
+    # Cada vuelo tiene que traer lo que el navegador necesita para interpolar. Si falta
+    # una punta o un instante, el avion no se puede ubicar y el trace sale con NaN.
+    _faltan = [k for v in _av.get('vuelos', [])[:20] for k in
+               ('olat', 'olon', 'dlat', 'dlon', 'salida_epoch', 'llegada_epoch')
+               if k not in v]
+    check('cada vuelo trae las dos puntas y los dos instantes', not _faltan, str(set(_faltan)))
+
+    # Y ninguno puede venir ya aterrizado: el filtro es del servidor, y si se rompe se
+    # veria como aviones clavados sobre el destino.
+    _malos = [v for v in _av.get('vuelos', []) if v['llegada_epoch'] <= v['salida_epoch']]
+    check('ninguno llega antes de salir', not _malos, '%d con duracion <= 0' % len(_malos))
+
+    # Un 0 de pasajeros es "no informado" en este feed: no puede viajar como 0.
+    _ceros = [v for v in _av.get('vuelos', []) if v.get('pax') == 0]
+    check('los pasajeros en 0 viajan como None, no como cero', not _ceros,
+          '%d vuelos con pax=0' % len(_ceros))
+
+    with c.session_transaction() as _s:
+        _s['user_nivel'] = 1
+    _r = c.get('/api/en-el-aire')
+    check('/api/en-el-aire da 200 con sesion', _r.status_code == 200, 'status %s' % _r.status_code)
+    check('/api/en-el-aire no reporta error', 'error' not in (_r.get_json() or {}))
+    check('sin sesion da 401', app.test_client().get('/api/en-el-aire').status_code == 401)
+
+# El mapa tiene que seguir teniendo el boton y el trace: sin esto el endpoint anda y la
+# capa no aparece, que es el fallo mas dificil de notar.
+with open('map.html', encoding='utf-8') as _fh:
+    _mapsrc = _fh.read()
+for _et, _m in (('el boton esta en la barra', 'id="btn-aviones"'),
+                ('el trace se empuja en render()', 'empujarAviones(traces)'),
+                ('el hover dice que es estimada', 'no es seguimiento')):
+    check('Aviones: ' + _et, _m in _mapsrc)
 print()
 if fallos:
     print(f'RESULTADO: {len(fallos)} verificacion(es) fallaron')
