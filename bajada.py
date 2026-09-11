@@ -54,8 +54,19 @@ afuera a proposito (medido el 2026-09-10 comparando los dos models.py):
   presupuesto_mensual   existe SOLO en el local.
   app_user              existe SOLO en el web.
 
-Y las cuatro sensibles nunca viajan, por la misma regla que datos/actualizar_semilla.py:
-un zip que se pega en una carpeta compartida no se sabe donde termina.
+LAS VENTAS DE YPF SI VIAJAN, DESDE EL 2026-09-10 Y A PEDIDO
+------------------------------------------------------------
+`fuel_sale` estuvo prohibida y ahora esta en la lista. La objecion se planteo antes de
+cambiarlo -- el archivo va a una biblioteca compartida con un equipo -- y la decision fue
+que la terminal tiene que ver las ventas. Queda escrito para que no se lea como un
+descuido.
+
+Lo que NO cambia es `datos/semilla.db`: el zip que se reparte a mano las sigue vaciando
+siempre y sin preguntar. Son dos paquetes con alcances distintos a proposito.
+
+Siguen sin viajar `app_user` y `admin_file` (cuentas y archivos subidos, que el mapa de la
+terminal no usa porque no tiene login) y los tres logs de carga, que son PROCEDENCIA y no
+contenido.
 """
 from __future__ import annotations
 
@@ -90,6 +101,24 @@ TABLAS_ESPEJO = (
     'proyeccion_config',
     'proyeccion_exclusion',
     'proyeccion_ruta',
+
+    # LAS VENTAS DE YPF VIAJAN, POR DECISION EXPLICITA DEL 2026-09-10.
+    #
+    # Estuvieron prohibidas hasta hoy y el motivo sigue siendo cierto: el archivo se pega
+    # en una biblioteca de SharePoint compartida con un equipo, y de ahi no se sabe donde
+    # termina. Se planteo asi antes de cambiarlo y la respuesta fue que la terminal tiene
+    # que ver las ventas. No es un olvido: si manana alguien se pregunta por que esto esta
+    # aca, la respuesta es que se pidio sabiendo el costo.
+    #
+    # Sus 12 columnas son IDENTICAS en los dos repos (verificado contra los dos
+    # models.py), asi que el espejo copia la tabla entera y no una parte.
+    #
+    # OJO CON LO QUE ESTO **NO** CAMBIA: `datos/semilla.db`, que viaja en el zip que se
+    # reparte a mano, las sigue vaciando (actualizar_semilla.py, siempre y sin preguntar).
+    # Los dos paquetes tienen alcances distintos a proposito -- el zip se manda por
+    # cualquier lado y la bajada va a una biblioteca con permisos -- asi que una PC nueva
+    # abre en cero y recibe las ventas con la primera bajada.
+    'fuel_sale',
 )
 
 # Las partidas viajan en la misma base pero se aplican COMPLETANDO, no reemplazando.
@@ -97,7 +126,13 @@ TABLA_PARTIDAS = 'vuelo_oficial'
 
 # Nunca viajan. No alcanza con que no esten en la lista blanca: se comprueba, porque el
 # dia que alguien agregue una a la lista sin pensarlo el chequeo tiene que gritar.
-PROHIBIDAS = ('fuel_sale', 'fuel_sale_upload_log', 'app_user', 'admin_file')
+#
+# `fuel_sale` SALIO de esta tupla el 2026-09-10 -- ver el comentario en TABLAS_ESPEJO.
+# Las tres que quedan no son negociables por otro motivo: `app_user` y `admin_file` son
+# cuentas y archivos subidos, que no le sirven de nada al mapa de la terminal (no tiene
+# login), y `fuel_sale_upload_log` es PROCEDENCIA y no contenido -- quien subio que
+# planilla y cuando -- igual que `upload_log` y `airline_upload_log`, que tampoco viajan.
+PROHIBIDAS = ('fuel_sale_upload_log', 'app_user', 'admin_file')
 
 # LA TABLA SIN LA CUAL UNA BAJADA NO ES UNA BAJADA. Es el historico de ANAC: el mapa
 # entero cuelga de ahi. Si viene vacia, quien la armo no tiene datos -- una instancia
