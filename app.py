@@ -1181,6 +1181,54 @@ def api_quien_cargo():
         return jsonify({'error': '%s: %s' % (type(e).__name__, e)}), 500
 
 
+def _filtros_analisis():
+    """Lee los filtros de la query. UNA sola funcion para la pantalla y para el Excel.
+
+    Si cada endpoint los parseara por su cuenta, el archivo que se baja podria no ser lo
+    que se esta mirando -- y un Excel que dice otra cosa que la pantalla es peor que no
+    tener Excel.
+
+    Devuelve (dia, horas, desde, hasta, aerolinea, tipo, dia_por_defecto).
+    """
+    aerolinea = (request.args.get('aerolinea') or '').strip().upper() or None
+    tipo = (request.args.get('tipo') or '').strip().lower() or None
+    if tipo not in (None, 'cabotaje', 'internacional'):
+        tipo = None
+    desde = (request.args.get('desde') or '').strip() or None
+    hasta = (request.args.get('hasta') or '').strip() or None
+    # Una fecha que no es una fecha se ignora en vez de reventar: el rango es opcional
+    # y un parametro pegado a mano no tiene por que tirar la pantalla abajo.
+    if desde and not _es_fecha(desde):
+        desde = None
+    if hasta and not _es_fecha(hasta):
+        hasta = None
+
+    _dia = (request.args.get('dia') or '').strip()
+    dia_por_defecto = False
+    horas = 24.0
+    if desde or hasta:
+        # EL RANGO MANDA sobre el dia y sobre la ventana de horas, igual que en
+        # msrtic.calcular(): son tres formas de cortar lo mismo y se aplica una.
+        dia, horas = None, None
+    elif _dia == 'todo':
+        dia, horas = None, None
+    elif _dia:
+        dia = _dia
+    else:
+        dia = datetime.now().strftime('%Y-%m-%d')
+        dia_por_defecto = True
+    return dia, horas, desde, hasta, aerolinea, tipo, dia_por_defecto
+
+
+def _es_fecha(s):
+    """'AAAA-MM-DD' y ademas una fecha que existe (no '2026-02-31')."""
+    try:
+        datetime.strptime(s, '%Y-%m-%d')
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
 @app.route('/analisis-quien-cargo')
 @requiere_nivel(1)
 def analisis_quien_cargo_page():
@@ -1200,23 +1248,7 @@ def api_analisis_quien_cargo():
     """KPIs por aerolinea, rutas y aviones del dia elegido."""
     if analisis_quien_cargo is None or msrtic is None:
         return jsonify({'error': 'modulo no disponible: %s' % MSRTIC_ERROR}), 503
-    aerolinea = (request.args.get('aerolinea') or '').strip().upper() or None
-    tipo = (request.args.get('tipo') or '').strip().lower() or None
-    if tipo not in (None, 'cabotaje', 'internacional'):
-        tipo = None
-    _dia = (request.args.get('dia') or '').strip()
-    dia_por_defecto = False
-    # `horas` SOLO ACOTA CUANDO NO HAY DIA ELEGIDO. Con 'todo' se va a None: dejar las
-    # 24 h por defecto hacia que la opcion "todo el historico" mostrara el ultimo dia,
-    # que es peor que no ofrecerla.
-    horas = 24.0
-    if _dia == 'todo':
-        dia, horas = None, None
-    elif _dia:
-        dia = _dia
-    else:
-        dia = datetime.now().strftime('%Y-%m-%d')
-        dia_por_defecto = True
+    dia, horas, desde, hasta, aerolinea, tipo, dia_por_defecto = _filtros_analisis()
     try:
         # MISMA CAIDA DE DIA QUE /api/quien-cargo, y por el mismo motivo: el dia
         # corriente no tiene ninguna partida confirmada hasta que el sondeo capture la
@@ -1229,7 +1261,7 @@ def api_analisis_quien_cargo():
             if con_datos:
                 dia_cayo_a, dia = dia, con_datos
         out = analisis_quien_cargo.analisis(dia=dia, horas=horas, aerolinea=aerolinea,
-                                            tipo=tipo)
+                                            tipo=tipo, desde=desde, hasta=hasta)
         out['dias'] = dias
         out['dia'] = dia
         out['dia_sin_datos'] = dia_cayo_a
@@ -1237,6 +1269,142 @@ def api_analisis_quien_cargo():
     except Exception as e:
         app.logger.warning('analisis-quien-cargo fallo: %s: %s', type(e).__name__, e)
         return jsonify({'error': '%s: %s' % (type(e).__name__, e)}), 500
+
+
+@app.route('/analisis-quien-cargo.xlsx')
+@requiere_nivel(1)
+def analisis_quien_cargo_xlsx():
+    """Lo que se esta viendo en /analisis-quien-cargo, en un Excel.
+
+    MISMOS FILTROS QUE LA PANTALLA, leidos por la misma funcion. Si se filtrara distinto,
+    alguien compararia el Excel con la pantalla, verian numeros distintos y no habria
+    forma de saber cual manda.
+
+    Tres hojas -- las mismas tres tablas -- mas una de meta que deja el filtro escrito:
+    un Excel sin saber de que dia y que aerolinea habla es un numero suelto, y estos se
+    mandan por mail.
+    """
+    if analisis_quien_cargo is None or msrtic is None:
+        return jsonify({'error': 'modulo no disponible: %s' % MSRTIC_ERROR}), 503
+    import time as _t
+    dia, horas, desde, hasta, aerolinea, tipo, dia_por_defecto = _filtros_analisis()
+    try:
+        # MISMA CAIDA DE DIA QUE LA PANTALLA: si no, el Excel del dia por defecto sale
+        # vacio todas las mananas mientras la pantalla muestra el ultimo dia con datos.
+        if dia_por_defecto:
+            dias = quien_cargo.dias_disponibles(msrtic.base_oficial())
+            if not any(x['dia'] == dia and x['despegadas'] for x in dias):
+                con_datos = next((x['dia'] for x in dias if x['despegadas']), None)
+                if con_datos:
+                    dia = con_datos
+        d = analisis_quien_cargo.analisis(dia=dia, horas=horas, aerolinea=aerolinea,
+                                          tipo=tipo, desde=desde, hasta=hasta)
+    except Exception as e:                               # noqa: BLE001
+        app.logger.warning('analisis xlsx fallo: %s: %s', type(e).__name__, e)
+        return jsonify({'error': '%s: %s' % (type(e).__name__, e)}), 500
+
+    def _rango(f):
+        """El MS como texto "piso-techo", en una celda: es un rango, no dos datos."""
+        if f.get('ms_ypf_piso') is None:
+            return ''
+        return '%s-%s%%' % (f['ms_ypf_piso'], f['ms_ypf_techo'])
+
+    aero = [{
+        'Aerolinea': f['nombre'], 'Codigo': f['id'], 'Vuelos': f['vuelos'],
+        'Atraso promedio (min)': f.get('atraso_prom_min'),
+        'Puntualidad (%)': f.get('puntualidad'),
+        'Vuelos con hora medida': f.get('con_hora'),
+        'Cancelados': f.get('cancelados'),
+        'Ocupacion (%)': f['ocupacion'],
+        'Vuelos con pax informado': f['vuelos_con_pax'],
+        'Pasajeros': f['pax'],
+        'm3': f['m3'], 'm3 YPF': f['m3_ypf'], 'MS YPF': _rango(f),
+        # Cuantos de esos m3 salen del avion REAL y cuantos de una estimacion: sin esto
+        # el numero se lee como si todo estuviera medido.
+        'Vuelos con avion real': f['aviones_medidos'],
+        'Vuelos con avion estimado': f['aviones_estimados'],
+        'Aviones': ', '.join(f['aviones'] or []),
+    } for f in d['aerolineas']]
+
+    rutas = [{
+        'Ruta': '%s-%s' % (f.get('cod_o') or '', f.get('cod_d') or ''),
+        'Origen': f['origin'], 'Destino': f['dest'], 'Tipo': f['tipo'],
+        'Abastece': f['proveedor'], 'Por que': f['motivo'],
+        'Cubierta por YPF': 'SI' if f['cubierta'] else 'NO',
+        'Vuelos': f['vuelos'], 'Km': f.get('distancia_km'),
+        'Aviones': ', '.join(f['aviones'] or []),
+        'm3': f['m3'], 'Ocupacion (%)': f['ocupacion'], 'Pasajeros': f['pax'],
+        'Vuelos con avion real': f['aviones_medidos'],
+        'Vuelos con avion estimado': f['aviones_estimados'],
+    } for f in d['rutas']]
+
+    # Los aviones se cuentan igual que en la pantalla: vuelos de las rutas donde el tipo
+    # aparecio. NO es "vuelos de ese avion", y por eso la columna lo dice.
+    por_tipo = {}
+    for r in d['rutas']:
+        for c in (r['aviones'] or []):
+            por_tipo[c] = por_tipo.get(c, 0) + r['vuelos']
+    aviones = [{'Tipo': c, 'Vuelos en rutas donde opero': n}
+               for c, n in sorted(por_tipo.items(), key=lambda x: -x[1])]
+
+    meta = {
+        'generado': _t.strftime('%Y-%m-%dT%H:%M:%S'),
+        'dia': d.get('dia') or '',
+        'desde': desde or '', 'hasta': hasta or '',
+        'aerolinea': aerolinea or 'todas',
+        'tipo': tipo or 'cabotaje + internacional',
+        'vuelos': d['vuelos'], 'm3': d['m3'], 'm3_ypf': d['m3_ypf'],
+        'ms_ypf': _rango(d),
+        'ocupacion_pct': d['ocupacion'] if d['ocupacion'] is not None else '',
+        'vuelos_con_avion_real': d['aviones_medidos'],
+        'vuelos_con_avion_estimado': d['aviones_estimados'],
+        'ojo_ms': ('El MS va como rango: piso son los m3 de rutas declaradas de YPF, '
+                   'techo suma las que nadie declaro.'),
+        'ojo_ocupacion': ('Solo sobre vuelos con pasajeros informados mayores a cero y '
+                          'con tipo de avion conocido.'),
+        'origen': 'partidas de AA2000 sondeadas por mapa-negocio web',
+    }
+
+    from openpyxl import Workbook
+    wb = Workbook()
+    primera = True
+    for nombre, filas in (('por_aerolinea', aero), ('rutas', rutas), ('aviones', aviones)):
+        h = wb.active if primera else wb.create_sheet()
+        h.title = nombre
+        primera = False
+        if filas:
+            cols = list(filas[0].keys())
+            h.append(cols)
+            for f in filas:
+                h.append([f[c] for c in cols])
+        else:
+            # Esta leyenda explica que el filtro no dio nada; una hoja en blanco parece
+            # un archivo roto.
+            h.append(['(sin filas para este filtro)'])
+    hm = wb.create_sheet('meta')
+    hm.append(['clave', 'valor'])
+    for k, v in sorted(meta.items()):
+        hm.append([k, v])
+
+    import io as _io
+    buf = _io.BytesIO()
+    wb.save(buf)
+    resp = make_response(buf.getvalue())
+    resp.headers['Content-Type'] = ('application/vnd.openxmlformats-officedocument'
+                                    '.spreadsheetml.sheet')
+    # EL NOMBRE LLEVA EL FILTRO: tres Excel en la carpeta de Descargas con el mismo
+    # nombre son tres archivos que nadie puede distinguir.
+    if desde or hasta:
+        que = '%s_a_%s' % (desde or 'inicio', hasta or 'hoy')
+    else:
+        que = d.get('dia') or 'historico'
+    if aerolinea:
+        que += '-' + aerolinea
+    if tipo:
+        que += '-' + tipo
+    resp.headers['Content-Disposition'] = (
+        'attachment; filename=analisis-quien-cargo-%s.xlsx' % que)
+    return resp
 
 
 def _token_export_ok():

@@ -29,8 +29,14 @@
 
   .filtros { display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
              margin-bottom: 6px; }
-  select { background: #11141a; color: #e6e6e6; border: 1px solid #2b313b;
+  select, input[type=date] { background: #11141a; color: #e6e6e6; border: 1px solid #2b313b;
            border-radius: 6px; padding: 7px 10px; font-size: .9rem; font-family: inherit; }
+  input[type=date]::-webkit-calendar-picker-indicator { filter: invert(.7); cursor: pointer; }
+  .boton { background: #10243a; color: #7dd3fc; border: 1px solid #2b5878;
+           border-radius: 6px; padding: 8px 14px; font-size: .88rem; font-family: inherit;
+           cursor: pointer; text-decoration: none; display: inline-block; }
+  .boton:hover { background: #16324f; }
+  .sep { width: 1px; align-self: stretch; background: #2b313b; margin: 0 4px; }
   label { color: #9aa0a6; font-size: .85rem; }
 
   .kpis { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
@@ -48,6 +54,7 @@
   td { font-variant-numeric: tabular-nums; }
   tr:hover td { background: #161a21; }
   .sindato { color: #4b5563; }
+  .alto { color: #fbbf24; cursor: help; }
   .tag { font-size: .72rem; padding: 2px 7px; border-radius: 999px; }
   .tag.ypf { background: #10243a; color: #7dd3fc; }
   .tag.otro { background: #2f1416; color: #fca5a5; }
@@ -71,12 +78,22 @@
 
 <div class="filtros">
   <label>Día <select id="f-dia"></select></label>
+  {# `input type=date` del navegador: trae el calendario, el teclado y el formato local
+     sin una linea de JS ni una libreria. Esta pantalla no carga nada de afuera. #}
+  <label>Desde <input type="date" id="f-desde"></label>
+  <label>hasta <input type="date" id="f-hasta"></label>
+  <button class="boton" id="b-limpiar" type="button" hidden>Quitar rango</button>
+  <div class="sep"></div>
   <label>Aerolínea <select id="f-aerolinea"><option value="">Todas</option></select></label>
   <label>Tipo <select id="f-tipo">
     <option value="">Cabotaje + internacional</option>
     <option value="cabotaje">Solo cabotaje</option>
     <option value="internacional">Solo internacional</option>
   </select></label>
+  <div class="sep"></div>
+  {# Un <a> y no un fetch: la descarga la hace el navegador, con su barra de progreso y
+     su manejo de errores. El href se reescribe con los filtros en cada pintada. #}
+  <a class="boton" id="b-excel" href="/analisis-quien-cargo.xlsx">Descargar Excel</a>
 </div>
 
 <div class="panel"><div class="kpis" id="kpis"></div></div>
@@ -88,6 +105,9 @@
     <b>MS YPF</b> va como rango: el piso son los m³ de las rutas que la planilla
     declara de YPF, el techo suma las que nadie declaró. Un número solo elegiría una
     de las dos puntas sin decirlo.
+    <br><b>Ocupación marcada con *</b>: pasa de 100% porque los asientos son los de una
+    configuración de referencia y el avión real puede traer más. No se capa a 100 para
+    no hacerla parecer exacta.
   </p>
 </div>
 
@@ -128,6 +148,20 @@ function num(v, d) {
                                             maximumFractionDigits: d || 0});
 }
 function pct(v) { return v == null ? '<span class="sindato">sin dato</span>' : num(v, 1) + '%'; }
+
+// La ocupacion puede pasar de 100 legitimamente: los asientos son los de UNA
+// configuracion de referencia y el avion real puede traer mas (un B738 figura con 170 y
+// vuela con hasta 189). Se marca en vez de caparlo: capar esconderia que el denominador
+// es aproximado y dejaria el numero pareciendo exacto.
+function ocup(v) {
+  if (v == null) return '<span class="sindato">sin dato</span>';
+  if (v > 100) {
+    return '<span class="alto" title="Mas de 100%: el avion real tenia mas asientos que ' +
+           'los de referencia del modelo, o el pax informado viene de vuelos hechos con ' +
+           'un avion mas grande que el promedio de la fila.">' + num(v, 1) + '%*</span>';
+  }
+  return num(v, 1) + '%';
+}
 
 function tagProveedor(p) {
   if (p === 'YPF') return '<span class="tag ypf">YPF</span>';
@@ -213,7 +247,13 @@ function pintar(d) {
   const banda = document.getElementById('banda');
   const tot = d.aviones_medidos + d.aviones_estimados;
   const medido = tot ? Math.round(100 * d.aviones_medidos / tot) : null;
-  let txt = 'Día <b>' + esc(d.dia || 'todo el histórico') + '</b>.';
+  const f = d.filtro || {};
+  let txt;
+  if (f.desde || f.hasta) {
+    txt = 'Del <b>' + esc(f.desde || 'inicio') + '</b> al <b>' + esc(f.hasta || 'hoy') + '</b>.';
+  } else {
+    txt = 'Día <b>' + esc(d.dia || 'todo el histórico') + '</b>.';
+  }
   if (d.dia_sin_datos) {
     txt += ' <b>' + esc(d.dia_sin_datos) + ' todavía no tiene despegues confirmados</b>, ' +
            'así que se muestra el último día con datos.';
@@ -234,7 +274,7 @@ function pintar(d) {
     ['MS YPF', (d.ms_ypf_piso == null ? '—'
        : num(d.ms_ypf_piso, 1) + '–' + num(d.ms_ypf_techo, 1) + '%'),
      'Piso: declaradas. Techo: + sin declarar'],
-    ['Ocupación', pct(d.ocupacion),
+    ['Ocupación', ocup(d.ocupacion),
      d.vuelos_con_pax ? 'Sobre ' + num(d.vuelos_con_pax) + ' vuelos con pax informado'
                       : 'Sin pax informado'],
     ['Pasajeros', num(d.pax), 'Solo los vuelos que lo informaron'],
@@ -251,7 +291,7 @@ function pintar(d) {
                 : num(f.atraso_prom_min, 1) + ' min') + '</td>' +
       '<td>' + pct(f.puntualidad) + '</td>' +
       '<td>' + num(f.cancelados) + '</td>' +
-      '<td>' + pct(f.ocupacion) + '</td>' +
+      '<td>' + ocup(f.ocupacion) + '</td>' +
       '<td>' + num(f.m3, 1) + '</td>' +
       '<td>' + (f.ms_ypf_piso == null ? '<span class="sindato">sin dato</span>'
                 : num(f.ms_ypf_piso, 1) + '–' + num(f.ms_ypf_techo, 1) + '%') + '</td></tr>');
@@ -301,17 +341,41 @@ function opciones(sel, items, valor) {
   sel.value = valor != null ? valor : v;
 }
 
+// Los filtros en un solo lugar: la pantalla y el Excel tienen que pedir lo MISMO. Si
+// cada uno armara su query, el archivo bajado podria no ser lo que se esta mirando.
+function filtros() {
+  const p = new URLSearchParams();
+  const desde = document.getElementById('f-desde').value;
+  const hasta = document.getElementById('f-hasta').value;
+  const dia = document.getElementById('f-dia').value;
+  const aero = document.getElementById('f-aerolinea').value;
+  const tipo = document.getElementById('f-tipo').value;
+  // EL RANGO MANDA sobre el dia, igual que en el backend: son dos formas de cortar lo
+  // mismo y mandar las dos daria un recorte que nadie pidio.
+  if (desde || hasta) {
+    if (desde) p.set('desde', desde);
+    if (hasta) p.set('hasta', hasta);
+  } else if (dia) {
+    p.set('dia', dia);
+  }
+  if (aero) p.set('aerolinea', aero);
+  if (tipo) p.set('tipo', tipo);
+  return p;
+}
+
 let cargando = false;
 function cargar() {
   if (cargando) return;
   cargando = true;
-  const p = new URLSearchParams();
-  const dia = document.getElementById('f-dia').value;
-  const aero = document.getElementById('f-aerolinea').value;
-  const tipo = document.getElementById('f-tipo').value;
-  if (dia) p.set('dia', dia);
-  if (aero) p.set('aerolinea', aero);
-  if (tipo) p.set('tipo', tipo);
+  const p = filtros();
+  const hayRango = p.has('desde') || p.has('hasta');
+  // Con un rango puesto, el selector de dia queda sin efecto: se desactiva en vez de
+  // dejarlo ofreciendo algo que no hace nada.
+  document.getElementById('f-dia').disabled = hayRango;
+  document.getElementById('b-limpiar').hidden = !hayRango;
+  document.getElementById('b-excel').href = '/analisis-quien-cargo.xlsx?' + p.toString();
+  const dia = p.get('dia') || '';
+  const aero = p.get('aerolinea') || '';
   fetch('/api/analisis-quien-cargo?' + p.toString())
     .then(r => r.json())
     .then(d => {
@@ -333,8 +397,13 @@ function cargar() {
     .finally(() => { cargando = false; });
 }
 
-['f-dia', 'f-aerolinea', 'f-tipo'].forEach(
+['f-dia', 'f-desde', 'f-hasta', 'f-aerolinea', 'f-tipo'].forEach(
   id => document.getElementById(id).addEventListener('change', cargar));
+document.getElementById('b-limpiar').addEventListener('click', () => {
+  document.getElementById('f-desde').value = '';
+  document.getElementById('f-hasta').value = '';
+  cargar();
+});
 cargar();
 </script>
 

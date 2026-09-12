@@ -69,19 +69,26 @@ def _puntualidad(filas):
     return out
 
 
-def _asientos(codigos):
-    """Asientos del tipo mas frecuente de la fila, para poder dividir la ocupacion.
+def _asientos(fila):
+    """Asientos promedio de la fila, PONDERADOS por cuantas veces volo cada tipo.
 
-    ponytail: se usa el tipo MAS frecuente, no el promedio ponderado de todos. En
-    una ruta que mezcla A320 y E190 eso corre la ocupacion unos puntos; si alguna
-    vez importa, ponderar por la cuenta de `aviones` que ya viene en la fila.
+    Antes se usaba el tipo mas frecuente para toda la fila y eso daba ocupaciones
+    imposibles: Andes marcaba 108,5% porque sus vuelos mezclan tipos y el denominador
+    salia del avion mas chico. Un porcentaje mayor a 100 no es un redondeo, es un
+    denominador equivocado.
+
+    Los tipos sin asientos en la flota no entran en el promedio en vez de contar como
+    cero: un avion que no conocemos no achica los asientos de los que si.
     """
     flota = avion_model.get_flota()
-    for c in codigos or []:
-        ficha = flota.get(c)
+    cuentas = fila.get("aviones_n") or {c: 1 for c in (fila.get("aviones") or [])}
+    total_asientos, total_vuelos = 0, 0
+    for codigo, n in cuentas.items():
+        ficha = flota.get(codigo)
         if ficha and ficha.get("asientos"):
-            return int(ficha["asientos"])
-    return None
+            total_asientos += int(ficha["asientos"]) * n
+            total_vuelos += n
+    return (total_asientos / total_vuelos) if total_vuelos else None
 
 
 def _nuevo():
@@ -98,7 +105,7 @@ def _acumular(destino, f):
     if f.get("pax"):
         destino["pax"] += f["pax"]
         destino["vuelos_con_pax"] += f["vuelos_con_pax_pos"]
-        asientos = _asientos(f.get("aviones"))
+        asientos = _asientos(f)
         if asientos:
             destino["asientos"] += asientos * f["vuelos_con_pax_pos"]
     for c in f.get("aviones") or []:
@@ -120,6 +127,15 @@ def _cerrar(d):
         # La ocupacion solo se calcula sobre los vuelos que informaron pax > 0 Y cuyo
         # tipo de avion conocemos: sin asientos no hay denominador. Si no hay ninguno,
         # es None y la pantalla dice "sin dato" en vez de dibujar un 0%.
+        #
+        # PUEDE PASAR DE 100 Y NO SE CAPA. Dos motivos reales, los dos del dato y no de
+        # la cuenta: (1) `asientos` de avion_model es UNA configuracion, no la del avion
+        # que volo -- un B738 figura con 170 y se vende hasta con 189, y Andes informo
+        # 185 pax en uno; (2) el pax viene de unos pocos vuelos de la fila y el
+        # denominador promedia los aviones de TODOS, porque el feed no dice que avion
+        # hizo cual. Capar a 100 esconderia las dos cosas y dejaria la ocupacion
+        # pareciendo exacta. Un valor arriba de 100 se lee como "el avion real tenia mas
+        # asientos que el de referencia", y la pantalla lo dice.
         "ocupacion": (round(100.0 * d["pax"] / d["asientos"], 1)
                       if d["asientos"] and d["pax"] else None),
         # El share va como RANGO, igual que en el banner del mapa: piso son los m3 de
@@ -198,8 +214,22 @@ def analisis(dia=None, horas=24.0, aerolinea=None, tipo=None, desde=None, hasta=
         r["cod_o"], r["cod_d"] = f.get("cod_o"), f.get("cod_d")
 
     # Puntualidad: partidas crudas, no las filas agregadas de msrtic.
-    tab = quien_cargo.tablero(msrtic.base_oficial(), horas=horas, dia=dia)
-    punt = _puntualidad(tab["vuelos"] if tab else [])
+    #
+    # `tablero()` entiende dia y ventana de horas, pero NO rango: con un rango pedido se
+    # le pide todo y se recorta aca con el mismo criterio que usa msrtic -- dia LOCAL de
+    # la partida, inclusivo en las dos puntas. Filtrar distinto que msrtic haria que la
+    # puntualidad hablara de un conjunto de vuelos y los m3 de otro, en la misma fila.
+    if desde or hasta:
+        tab = quien_cargo.tablero(msrtic.base_oficial(), horas=None)
+        d0, d1 = (desde or "0000-00-00"), (hasta or "9999-99-99")
+        if d0 > d1:
+            d0, d1 = d1, d0
+        vuelos = [v for v in (tab["vuelos"] if tab else [])
+                  if d0 <= (quien_cargo.dia_de(v) or "") <= d1]
+    else:
+        tab = quien_cargo.tablero(msrtic.base_oficial(), horas=horas, dia=dia)
+        vuelos = tab["vuelos"] if tab else []
+    punt = _puntualidad(vuelos)
 
     aerolineas = []
     for k, d in por_aero.items():
@@ -233,7 +263,8 @@ def analisis(dia=None, horas=24.0, aerolinea=None, tipo=None, desde=None, hasta=
         rutas=rutas,
         companias=sorted(todas.values(), key=lambda x: x["nombre"] or ""),
         proveedores=proveedores_conocidos(),
-        filtro={"dia": dia, "horas": horas, "aerolinea": aerolinea, "tipo": tipo},
+        filtro={"dia": dia, "horas": horas, "aerolinea": aerolinea, "tipo": tipo,
+                "desde": desde, "hasta": hasta},
         estado=est,
         generado=time.time(),
     )
@@ -269,6 +300,19 @@ def _self_check():
     _acumular(d3, dict(base, proveedor="sin_declarar"))
     r3 = _cerrar(d3)
     assert r3["ms_ypf_piso"] == 50.0 and r3["ms_ypf_techo"] == 100.0, r3
+
+    # Asientos ponderados: con dos tipos, el promedio pesa por cuantas veces volo cada
+    # uno. Es lo que evita ocupaciones mayores a 100.
+    flota = avion_model.get_flota()
+    par = [c for c in flota if flota[c].get("asientos")][:2]
+    if len(par) == 2:
+        a, b = par
+        sa, sb = flota[a]["asientos"], flota[b]["asientos"]
+        uno = _asientos({"aviones_n": {a: 3, b: 1}})
+        assert abs(uno - (sa * 3 + sb) / 4.0) < 1e-6, uno
+        # Un tipo desconocido no entra al promedio en vez de contar como cero asientos.
+        dos = _asientos({"aviones_n": {a: 1, "ZZZZ": 5}})
+        assert abs(dos - sa) < 1e-6, dos
 
     # Puntualidad: un vuelo adelantado no compensa a uno atrasado.
     p = _puntualidad([

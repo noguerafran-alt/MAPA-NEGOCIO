@@ -564,6 +564,10 @@ def calcular(horas=24.0, coords=None, dia=None, desde=None, hasta=None):
             'aviones_medidos': v['medidos'],
             'aviones_estimados': v['estimados'],
             'aviones': sorted(v['aviones'], key=lambda c: -v['aviones'][c]),
+            # Y CUANTAS VECES cada uno, no solo cuales. Con la lista sola, quien quiera
+            # un promedio por avion (asientos, por ejemplo) tiene que elegir uno y
+            # tratarlo como si hubiera volado todos los vuelos de la fila.
+            'aviones_n': dict(v['aviones']),
         })
         cr = coords_ruta.get((o, d))
         if cr:
