@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Análisis por aerolínea</title>
+<style>
+  /* Mismos tokens que quien_cargo.html: es la pantalla hermana y que se vean
+     distintas las haria parecer dos sistemas. Autocontenida, sin CDN. */
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; background: #0f1115; color: #e6e6e6;
+         margin: 0; padding: 24px; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  h2 { font-size: 1rem; color: #9aa0a6; text-transform: uppercase;
+       letter-spacing: .05em; margin: 0 0 12px; }
+  .subtitle { color: #9aa0a6; margin-bottom: 18px; font-size: .92rem; max-width: 70ch;
+              line-height: 1.5; }
+  a { color: #60a5fa; }
+  .panel { background: #1a1d24; border-radius: 12px; padding: 18px 20px; margin: 20px 0; }
+  .nota { color: #9aa0a6; font-size: .85rem; line-height: 1.55; margin: 10px 0 0;
+          max-width: 80ch; }
+  .nota b { color: #c9ced6; }
+  .empty { color: #9aa0a6; padding: 24px; text-align: center; }
+  .banda { border-radius: 8px; padding: 10px 15px; font-size: .85rem;
+           margin-bottom: 16px; line-height: 1.55; border-left: 3px solid; }
+  .banda.ok  { background: #10243a; border-color: #38bdf8; color: #bae6fd; }
+  .banda.mal { background: #2f1416; border-color: #f87171; color: #fecaca; }
+
+  .filtros { display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
+             margin-bottom: 6px; }
+  select { background: #11141a; color: #e6e6e6; border: 1px solid #2b313b;
+           border-radius: 6px; padding: 7px 10px; font-size: .9rem; font-family: inherit; }
+  label { color: #9aa0a6; font-size: .85rem; }
+
+  .kpis { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .kpi { background: #11141a; border-radius: 10px; padding: 14px 16px; }
+  .kpi .v { font-size: 1.5rem; font-variant-numeric: tabular-nums; }
+  .kpi .t { color: #9aa0a6; font-size: .78rem; text-transform: uppercase;
+            letter-spacing: .04em; margin-top: 4px; }
+  .kpi .s { color: #6b7280; font-size: .76rem; margin-top: 6px; line-height: 1.4; }
+
+  table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+  th, td { text-align: right; padding: 7px 10px; border-bottom: 1px solid #232833; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: #9aa0a6; font-weight: 600; font-size: .78rem; text-transform: uppercase;
+       letter-spacing: .04em; }
+  td { font-variant-numeric: tabular-nums; }
+  tr:hover td { background: #161a21; }
+  .sindato { color: #4b5563; }
+  .tag { font-size: .72rem; padding: 2px 7px; border-radius: 999px; }
+  .tag.ypf { background: #10243a; color: #7dd3fc; }
+  .tag.otro { background: #2f1416; color: #fca5a5; }
+  .tag.nadie { background: #23262d; color: #9aa0a6; }
+  .scroll { overflow-x: auto; }
+</style>
+</head>
+<body>
+
+<p><a href="/">&larr; Inicio</a> &nbsp;·&nbsp; <a href="/quien-cargo">Ver vuelo por vuelo</a></p>
+
+<h1>Análisis por aerolínea</h1>
+<div class="subtitle">
+  Los mismos despegues de <a href="/quien-cargo">Quién le cargó</a>, agrupados por
+  compañía. Los metros cúbicos salen del modelo de consumo usando
+  <b>el tipo de avión real</b> cuando la matrícula está en el registro, y estimado
+  cuando no — la banda dice cuántos de cada uno.
+</div>
+
+<div id="banda" class="banda ok">Cargando…</div>
+
+<div class="filtros">
+  <label>Día <select id="f-dia"></select></label>
+  <label>Aerolínea <select id="f-aerolinea"><option value="">Todas</option></select></label>
+  <label>Tipo <select id="f-tipo">
+    <option value="">Cabotaje + internacional</option>
+    <option value="cabotaje">Solo cabotaje</option>
+    <option value="internacional">Solo internacional</option>
+  </select></label>
+</div>
+
+<div class="panel"><div class="kpis" id="kpis"></div></div>
+
+<div class="panel">
+  <h2>Por aerolínea</h2>
+  <div class="scroll"><table id="t-aero"></table></div>
+  <p class="nota">
+    <b>MS YPF</b> va como rango: el piso son los m³ de las rutas que la planilla
+    declara de YPF, el techo suma las que nadie declaró. Un número solo elegiría una
+    de las dos puntas sin decirlo.
+  </p>
+</div>
+
+<div class="panel">
+  <h2>Rutas</h2>
+  <div class="scroll"><table id="t-rutas"></table></div>
+  <p class="nota">
+    Para cambiar quién abastece una ruta, se edita la planilla en
+    <a href="/quien-cargo">Quién le cargó</a> — es la misma tabla que usa el mapa, y
+    tener dos editores sería tener dos verdades.
+  </p>
+</div>
+
+<div class="panel">
+  <h2>Aviones que operaron</h2>
+  <div class="scroll"><table id="t-aviones"></table></div>
+</div>
+
+<script>
+function esc(v) {
+  return String(v == null ? "" : v).replace(/[&<>"']/g, c => (
+    {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function num(v, d) {
+  if (v == null) return '<span class="sindato">sin dato</span>';
+  return Number(v).toLocaleString('es-AR', {minimumFractionDigits: d || 0,
+                                            maximumFractionDigits: d || 0});
+}
+function pct(v) { return v == null ? '<span class="sindato">sin dato</span>' : num(v, 1) + '%'; }
+
+function tagProveedor(p) {
+  if (p === 'YPF') return '<span class="tag ypf">YPF</span>';
+  if (p === 'sin_declarar') return '<span class="tag nadie">sin declarar</span>';
+  return '<span class="tag otro">' + esc(p) + '</span>';
+}
+
+function tabla(el, cols, filas, fila) {
+  if (!filas.length) {
+    el.innerHTML = '<tr><td class="empty">Sin datos para este filtro.</td></tr>';
+    return;
+  }
+  el.innerHTML = '<thead><tr>' + cols.map(c => '<th>' + c + '</th>').join('') +
+    '</tr></thead><tbody>' + filas.map(fila).join('') + '</tbody>';
+}
+
+function pintar(d) {
+  // La banda dice de qué día habla y cuánto de lo que muestra es avión medido y no
+  // estimado: sin eso, un m³ estimado se lee igual que uno sabido.
+  const banda = document.getElementById('banda');
+  const tot = d.aviones_medidos + d.aviones_estimados;
+  const medido = tot ? Math.round(100 * d.aviones_medidos / tot) : null;
+  let txt = 'Día <b>' + esc(d.dia || 'todo el histórico') + '</b>.';
+  if (d.dia_sin_datos) {
+    txt += ' <b>' + esc(d.dia_sin_datos) + ' todavía no tiene despegues confirmados</b>, ' +
+           'así que se muestra el último día con datos.';
+  }
+  txt += ' &nbsp;·&nbsp; ' + num(d.vuelos) + ' vuelos.';
+  if (medido != null) {
+    txt += ' &nbsp;·&nbsp; Avión <b>real</b> en ' + medido + '% de los vuelos (' +
+           num(d.aviones_medidos) + ' de ' + num(tot) + '); el resto es estimado.';
+  }
+  banda.className = 'banda ok';
+  banda.innerHTML = txt;
+
+  const k = document.getElementById('kpis');
+  k.innerHTML = [
+    ['Vuelos', num(d.vuelos), ''],
+    ['m³ estimados', num(d.m3, 1), 'Jet A-1, densidad 0,8 t/m³'],
+    ['m³ de YPF', num(d.m3_ypf, 1), 'Rutas declaradas en la planilla'],
+    ['MS YPF', (d.ms_ypf_piso == null ? '—'
+       : num(d.ms_ypf_piso, 1) + '–' + num(d.ms_ypf_techo, 1) + '%'),
+     'Piso: declaradas. Techo: + sin declarar'],
+    ['Ocupación', pct(d.ocupacion),
+     d.vuelos_con_pax ? 'Sobre ' + num(d.vuelos_con_pax) + ' vuelos con pax informado'
+                      : 'Sin pax informado'],
+    ['Pasajeros', num(d.pax), 'Solo los vuelos que lo informaron'],
+  ].map(([t, v, s]) => '<div class="kpi"><div class="v">' + v + '</div>' +
+        '<div class="t">' + esc(t) + '</div>' +
+        (s ? '<div class="s">' + esc(s) + '</div>' : '') + '</div>').join('');
+
+  tabla(document.getElementById('t-aero'),
+    ['Aerolínea', 'Vuelos', 'Atraso prom.', 'Puntualidad', 'Cancel.', 'Ocupación', 'm³', 'MS YPF'],
+    d.aerolineas, f => '<tr><td>' + esc(f.nombre) +
+      (f.id ? ' <span class="sindato">' + esc(f.id) + '</span>' : '') + '</td>' +
+      '<td>' + num(f.vuelos) + '</td>' +
+      '<td>' + (f.atraso_prom_min == null ? '<span class="sindato">sin dato</span>'
+                : num(f.atraso_prom_min, 1) + ' min') + '</td>' +
+      '<td>' + pct(f.puntualidad) + '</td>' +
+      '<td>' + num(f.cancelados) + '</td>' +
+      '<td>' + pct(f.ocupacion) + '</td>' +
+      '<td>' + num(f.m3, 1) + '</td>' +
+      '<td>' + (f.ms_ypf_piso == null ? '<span class="sindato">sin dato</span>'
+                : num(f.ms_ypf_piso, 1) + '–' + num(f.ms_ypf_techo, 1) + '%') + '</td></tr>');
+
+  tabla(document.getElementById('t-rutas'),
+    ['Ruta', 'Tipo', 'Abastece', 'Vuelos', 'Km', 'Aviones', 'm³'],
+    d.rutas, f => '<tr><td>' + esc(f.origin) + ' → ' + esc(f.dest) + '</td>' +
+      '<td>' + esc(f.tipo) + '</td>' +
+      '<td>' + tagProveedor(f.proveedor) + '</td>' +
+      '<td>' + num(f.vuelos) + '</td>' +
+      '<td>' + num(f.distancia_km) + '</td>' +
+      '<td>' + esc((f.aviones || []).join(', ')) + '</td>' +
+      '<td>' + num(f.m3, 1) + '</td></tr>');
+
+  // El listado de aviones se arma acá y no en el backend: es un conteo de la misma
+  // lista de rutas que ya vino, y pedirlo aparte sería una cuenta más para mantener.
+  const porTipo = {};
+  d.rutas.forEach(r => (r.aviones || []).forEach(
+    c => { porTipo[c] = (porTipo[c] || 0) + r.vuelos; }));
+  const aviones = Object.entries(porTipo).sort((a, b) => b[1] - a[1]);
+  tabla(document.getElementById('t-aviones'), ['Tipo', 'Vuelos en rutas donde operó'],
+    aviones, ([c, n]) => '<tr><td>' + esc(c) + '</td><td>' + num(n) + '</td></tr>');
+}
+
+function opciones(sel, items, valor) {
+  const v = sel.value;
+  sel.innerHTML = (sel.id === 'f-aerolinea' ? '<option value="">Todas</option>' : '') +
+    items.map(i => '<option value="' + esc(i.v) + '">' + esc(i.t) + '</option>').join('');
+  sel.value = valor != null ? valor : v;
+}
+
+let cargando = false;
+function cargar() {
+  if (cargando) return;
+  cargando = true;
+  const p = new URLSearchParams();
+  const dia = document.getElementById('f-dia').value;
+  const aero = document.getElementById('f-aerolinea').value;
+  const tipo = document.getElementById('f-tipo').value;
+  if (dia) p.set('dia', dia);
+  if (aero) p.set('aerolinea', aero);
+  if (tipo) p.set('tipo', tipo);
+  fetch('/api/analisis-quien-cargo?' + p.toString())
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) throw new Error(d.error);
+      opciones(document.getElementById('f-dia'),
+        [{v: 'todo', t: 'Todo el histórico'}].concat(
+          (d.dias || []).map(x => ({v: x.dia, t: x.dia + ' (' + x.despegadas + ')'}))),
+        dia || d.dia);
+      opciones(document.getElementById('f-aerolinea'),
+        (d.companias || []).map(c => ({v: c.id, t: c.nombre})), aero);
+      pintar(d);
+    })
+    .catch(e => {
+      const b = document.getElementById('banda');
+      b.className = 'banda mal';
+      b.textContent = 'No se pudo cargar: ' + e.message;
+    })
+    .finally(() => { cargando = false; });
+}
+
+['f-dia', 'f-aerolinea', 'f-tipo'].forEach(
+  id => document.getElementById(id).addEventListener('change', cargar));
+cargar();
+</script>
+
+</body>
+</html>

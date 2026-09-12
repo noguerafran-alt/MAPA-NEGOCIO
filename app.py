@@ -63,6 +63,7 @@ try:
     import msrtic
     import proveedores
     import quien_cargo
+    import analisis_quien_cargo
     import sondeo
     sondeo.arrancar()
     MSRTIC_ERROR = None
@@ -70,7 +71,7 @@ except Exception as _e:                                  # pragma: no cover
     # `bajada` va en esta lista: sin eso, si el import falla el nombre nunca se liga y
     # /api/bajada.zip muere con NameError en vez del 503 que explica que paso.
     bajada = cargar_excel = intercambio_ms = msrtic = proveedores = None
-    quien_cargo = sondeo = None
+    quien_cargo = sondeo = analisis_quien_cargo = None
     MSRTIC_ERROR = '%s: %s' % (type(_e).__name__, _e)
 
 app = Flask(__name__)
@@ -1177,6 +1178,64 @@ def api_quien_cargo():
         return jsonify(_payload)
     except Exception as e:
         app.logger.warning('quien-cargo fallo: %s: %s', type(e).__name__, e)
+        return jsonify({'error': '%s: %s' % (type(e).__name__, e)}), 500
+
+
+@app.route('/analisis-quien-cargo')
+@requiere_nivel(1)
+def analisis_quien_cargo_page():
+    """Los mismos vuelos de /quien-cargo, agrupados por aerolinea.
+
+    Mismo nivel que /quien-cargo y por el mismo motivo: es una pantalla de consulta.
+    Lo que exige nivel 2 es CAMBIAR la planilla de proveedores, y eso se decide
+    adentro de /quien-cargo, que es donde vive el editor.
+    """
+    return render_template('analisis_quien_cargo.html', nivel=nivel_actual())
+
+
+@app.route('/api/analisis-quien-cargo')
+@requiere_nivel(1)
+@limiter.limit("30 per minute")
+def api_analisis_quien_cargo():
+    """KPIs por aerolinea, rutas y aviones del dia elegido."""
+    if analisis_quien_cargo is None or msrtic is None:
+        return jsonify({'error': 'modulo no disponible: %s' % MSRTIC_ERROR}), 503
+    aerolinea = (request.args.get('aerolinea') or '').strip().upper() or None
+    tipo = (request.args.get('tipo') or '').strip().lower() or None
+    if tipo not in (None, 'cabotaje', 'internacional'):
+        tipo = None
+    _dia = (request.args.get('dia') or '').strip()
+    dia_por_defecto = False
+    # `horas` SOLO ACOTA CUANDO NO HAY DIA ELEGIDO. Con 'todo' se va a None: dejar las
+    # 24 h por defecto hacia que la opcion "todo el historico" mostrara el ultimo dia,
+    # que es peor que no ofrecerla.
+    horas = 24.0
+    if _dia == 'todo':
+        dia, horas = None, None
+    elif _dia:
+        dia = _dia
+    else:
+        dia = datetime.now().strftime('%Y-%m-%d')
+        dia_por_defecto = True
+    try:
+        # MISMA CAIDA DE DIA QUE /api/quien-cargo, y por el mismo motivo: el dia
+        # corriente no tiene ninguna partida confirmada hasta que el sondeo capture la
+        # primera hora de despegue, y sin esto la pantalla sale vacia todas las mananas.
+        # Solo cuando el dia NO fue pedido: un dia elegido a mano se muestra como es.
+        dias = quien_cargo.dias_disponibles(msrtic.base_oficial())
+        dia_cayo_a = None
+        if dia_por_defecto and not any(x['dia'] == dia and x['despegadas'] for x in dias):
+            con_datos = next((x['dia'] for x in dias if x['despegadas']), None)
+            if con_datos:
+                dia_cayo_a, dia = dia, con_datos
+        out = analisis_quien_cargo.analisis(dia=dia, horas=horas, aerolinea=aerolinea,
+                                            tipo=tipo)
+        out['dias'] = dias
+        out['dia'] = dia
+        out['dia_sin_datos'] = dia_cayo_a
+        return jsonify(out)
+    except Exception as e:
+        app.logger.warning('analisis-quien-cargo fallo: %s: %s', type(e).__name__, e)
         return jsonify({'error': '%s: %s' % (type(e).__name__, e)}), 500
 
 
