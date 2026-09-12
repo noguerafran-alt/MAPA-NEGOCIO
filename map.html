@@ -2339,6 +2339,7 @@ let avionesDatos = [];
 let avionesPidiendo = false;
 let avionesMotivo = '';
 let avionesUltimaPartida = 0;   // para poder decir si el dato quedó viejo
+let avionesRegistroDisponible = true;   // si hay archivo de matrículas contra el que cruzar
 // MIENTRAS EL USUARIO ARRASTRA EL MAPA NO SE TOCA NADA. Cada restyle rehace el SVG y
 // reescribe los transform de los <text>, asi que un tick en medio de un arrastre le
 // cambia la rotacion a los aviones y le pelea el gesto al mouse: el mapa se mueve a
@@ -2387,6 +2388,7 @@ function cargarAviones() {
     if (d && d.disponible) {
       avionesDatos = d.vuelos || [];
       avionesUltimaPartida = (d.estado || {}).ultima_partida_epoch || 0;
+      avionesRegistroDisponible = (d.estado || {}).registro_disponible !== false;
       avionesMotivo = '';
     } else {
       avionesDatos = [];
@@ -2427,7 +2429,20 @@ function avionesTexto(a) {
   // así que se dice.
   s += '<br>' + (v.avion ? esc(v.avion) : '<i>avión no identificado</i>');
   if (v.matricula) s += ' (' + esc(v.matricula) + ')';
-  if (!v.avion_medido) s += '<br><i>velocidad genérica: sin matrícula en el registro</i>';
+  // SI HAY MATRICULA Y NO SE RESOLVIO, el problema es el registro (o que no esta
+  // esa matricula anotada), NUNCA la matricula: llego, se ve arriba entre
+  // parentesis. Decir "sin matrícula en el registro" cuando SÍ vino matrícula
+  // afirma lo contrario de lo que pasó.
+  if (!v.avion_medido) {
+    if (v.matricula) {
+      s += '<br><i>velocidad genérica: matrícula '
+         + (avionesRegistroDisponible ? 'sin coincidencia en el registro'
+                                       : 'no cruzada, registro no disponible')
+         + '</i>';
+    } else {
+      s += '<br><i>velocidad genérica: sin matrícula en el registro</i>';
+    }
+  }
   // Un 0 de este feed es "no informado". Sólo 17% de las partidas traen pasajeros.
   s += '<br>Pasajeros: ' + (v.pax ? v.pax : '<i>no informados</i>');
   // QUIEN LE CARGA EL COMBUSTIBLE, que es lo que aporta el modulo del que salen estos
@@ -2481,7 +2496,11 @@ function avionesEdadTexto() {
   if (!avionesUltimaPartida) return '';
   const h = (Date.now() / 1000 - avionesUltimaPartida) / 3600;
   if (h < 1.5) return '';
-  return ' · última partida registrada hace ' + h.toFixed(1) + ' h';
+  // Mide la ultima salida detectada por CUALQUIERA de las dos horas (real o
+  // programada, la que ya se uso para decidir que la partida salio) -- no solo
+  // la hora real, que AA2000 publica con horas de atraso. Con solo la real esto
+  // decia "hace 3 h" con el feed al dia.
+  return ' · última salida detectada hace ' + h.toFixed(1) + ' h';
 }
 
 // El trace va DENTRO de render() para que sobreviva a cada redibujado del mapa; el tick

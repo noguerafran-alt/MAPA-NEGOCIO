@@ -108,8 +108,26 @@ def base_oficial():
     return os.environ.get('MS_RTIC_OFICIAL') or os.path.join(DISCO, 'aa2000_oficial.db')
 
 
+SEMILLA_AVIONES = os.path.join(BASE, 'datos', 'aircraft_db.sqlite')
+
+
 def base_aviones():
-    return os.environ.get('MS_RTIC_AVIONES') or os.path.join(DISCO, 'aircraft_db.sqlite')
+    """El registro de matriculas: disco > semilla del repo > nada.
+
+    EL DEL DISCO GANA cuando esta, porque es el volcado completo (609.357 filas,
+    incluye matriculas extranjeras) que alguien subio a mano a /var/data. La
+    semilla de datos/ solo tiene matriculas argentinas (LV/LQ) con typecode, para
+    que un deploy nuevo -- sin nada todavia en el disco persistente -- no caiga en
+    silencio a "avion no identificado" en el 100% de los vuelos. Se regenera con
+    datos/actualizar_registro_aviones.py.
+    """
+    del_entorno = os.environ.get('MS_RTIC_AVIONES')
+    if del_entorno:
+        return del_entorno
+    del_disco = os.path.join(DISCO, 'aircraft_db.sqlite')
+    if os.path.exists(del_disco):
+        return del_disco
+    return SEMILLA_AVIONES if os.path.exists(SEMILLA_AVIONES) else del_disco
 
 
 PROVEEDORES_SEMILLA = os.path.join(BASE, 'datos', 'proveedores.json')
@@ -184,12 +202,28 @@ def disponible():
     return os.path.exists(base_oficial())
 
 
+def registro_disponible():
+    """Si hay algun archivo de matriculas contra el que cruzar.
+
+    Distinto de "esta matricula puntual no esta anotada": si esto da False, NINGUNA
+    matricula va a resolver nunca, y eso tiene que llegar a la pantalla distinto de
+    "la matricula no estaba en el registro" -- lo primero es un problema del deploy,
+    lo segundo es una laguna del registro.
+    """
+    return os.path.exists(base_aviones())
+
+
 def _tipos_por_matricula(matriculas):
     """{matricula normalizada: typecode} para las que esten en el registro.
 
     Una sola pasada con todas las matriculas del periodo, no una consulta por
     fila: son ~600.000 aeronaves y abrir la base por vuelo cuesta mas que todo el
     resto junto.
+
+    Si el archivo no existe devuelve {} EN SILENCIO -- eso es a proposito, el
+    llamador tiene que consultar `registro_disponible()` aparte para saber si el
+    {} vacio significa "no hay archivo" o "ninguna matricula de esta tanda esta
+    anotada".
     """
     path = base_aviones()
     if not matriculas or not os.path.exists(path):
@@ -564,8 +598,10 @@ def en_el_aire(ahora=None, horas=36.0):
     est = {'partidas': len(partidas), 'despegadas': 0, 'en_el_aire': 0,
            'por_hora_programada': 0, 'sin_hora_medida': 0, 'sin_ruta': 0,
            'aterrizados': 0, 'avion_medido': 0, 'avion_desconocido': 0,
-           'con_pax': 0, 'iata_desconocidos': {}}
+           'con_pax': 0, 'iata_desconocidos': {},
+           'registro_disponible': registro_disponible()}
     vuelos = []
+    ultima_salida = 0
 
     for p in partidas:
         etiqueta = (p.get('estado') or '').strip().lower()
@@ -578,6 +614,8 @@ def en_el_aire(ahora=None, horas=36.0):
             est['sin_hora_medida'] += 1
             continue
         est['despegadas'] += 1
+        if salida > ultima_salida:
+            ultima_salida = salida
         if hora_base == 'programada':
             est['por_hora_programada'] += 1
 
@@ -633,8 +671,13 @@ def en_el_aire(ahora=None, horas=36.0):
             'proveedor': p.get('proveedor'), 'motivo': p.get('motivo'),
         })
 
-    est['ultima_partida_epoch'] = max(
-        (p.get('real_epoch') or 0 for p in partidas), default=0) or None
+    # NO es max(real_epoch): AA2000 publica la hora real con horas de atraso, asi
+    # que la mayoria de las partidas entran por hora PROGRAMADA (ver hora_base
+    # arriba). Medir solo contra la hora real hacia decir "hace 3 h" con el feed
+    # fresco -- lo viejo era la PUBLICACION de horas reales, no las partidas.
+    # `ultima_salida` ya usa la mejor hora disponible por partida, la misma que
+    # decide si una partida "ya salio".
+    est['ultima_partida_epoch'] = ultima_salida or None
     est['en_el_aire'] = len(vuelos)
     vuelos.sort(key=lambda v: -v['llegada_epoch'])
     return {'vuelos': vuelos, 'estado': est, 'ahora_epoch': ahora,

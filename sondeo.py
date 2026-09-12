@@ -97,8 +97,14 @@ def _construir_registro():
     El CSV completo son ~100 MB y 600.000 filas con 27 columnas; de eso hacen falta dos.
     Se escribe en un archivo temporal y se renombra al final: si el proceso muere a mitad
     de la descarga, no queda una base a medio llenar que el lookup daria por buena.
+
+    EL DESTINO ES SIEMPRE EL DISCO, no `msrtic.base_aviones()`: esa funcion ahora cae a
+    la semilla de datos/ cuando el disco todavia no tiene nada, y esa semilla YA EXISTE
+    en el repo. Si destino fuera el resultado de la cascada, el `os.path.exists(destino)`
+    de aca abajo daria True contra la semilla y esta descarga -- que es la que trae el
+    volcado COMPLETO, con matriculas extranjeras -- no correria nunca.
     """
-    destino = msrtic.base_aviones()
+    destino = os.path.join(msrtic.DISCO, 'aircraft_db.sqlite')
     if os.path.exists(destino):
         ESTADO['registro'] = 'listo'
         return
