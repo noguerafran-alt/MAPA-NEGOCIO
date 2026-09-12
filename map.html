@@ -1555,6 +1555,10 @@ function msRticTooltip(r) {
                    ruta_no_declarada: 'ruta competitiva sin declarar',
                    sin_planilla: 'sin planilla cargada' };
   let s = `<b>⏱ MS RTIC — partidas de hoy</b><br>`;
+  // MISMO CRITERIO QUE "QUIEN LE CARGÓ": solo partidas CONFIRMADAS (con hora real
+  // de despegue). Antes este número incluía partidas programadas/demoradas sin
+  // confirmar y por eso podía diferir del panel "Por ruta" para la misma ruta.
+  s += `<i>Solo partidas confirmadas (con hora real de despegue) — mismo criterio que "Quién le cargó"</i><br>`;
   s += `Abastece: <b>${r.proveedor === 'sin_declarar' ? 'sin declarar' : r.proveedor}</b>`;
   s += ` <i>(${NOMBRE[r.motivo] || r.motivo})</i>`;
   s += r.mixta ? ` <b>· ruta mixta</b><br>` : `<br>`;

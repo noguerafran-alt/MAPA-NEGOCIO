@@ -354,15 +354,39 @@ def calcular(horas=24.0, coords=None, dia=None, desde=None, hasta=None):
         crudas = [p for p in crudas if dia_de(p) == dia]
     coords = _coords() if coords is None else coords
 
+    # SOLO PARTIDAS CONFIRMADAS: con hora de despegue MEDIDA (real_epoch). Mismo
+    # criterio, mismo motivo, que quien_cargo.desde_base() -- ver el docstring de
+    # ese modulo. Esta funcion alimenta la planilla de consumo (m3, vuelos por
+    # ruta-aerolinea), asi que no puede contar partidas que AA2000 todavia no vio
+    # despegar: eso duplicaria, con otro numero, la decision que quien_cargo ya
+    # tomo y documento por escrito.
+    #
+    # OJO: este filtro es SOLO para calcular(). en_el_aire(), mas abajo, dibuja
+    # aviones volando AHORA y por diseno usa la hora PROGRAMADA cuando AA2000
+    # todavia no publico la real -- ver ESTADOS_YA_SALIO y su docstring. Aplicarle
+    # este mismo filtro vaciaria el mapa en vivo. Son dos preguntas distintas
+    # ("cuanto se cargo" vs "que esta volando ahora") y comparten _partidas() pero
+    # no este corte.
+    partidas_totales = len(crudas)
+    despegadas_total = sum(1 for p in crudas if p.get('real_epoch'))
+    crudas = [p for p in crudas if p.get('real_epoch')]
+
     mats = {_norm_matricula(p.get('matricula')) for p in crudas}
     mats.discard('')
     tipos = _tipos_por_matricula(mats)
     flota = avion_model.get_flota()
 
     est = {'partidas': len(crudas), 'dia': dia, 'desde': desde, 'hasta': hasta,
-           # Cuantas de las partidas del periodo ya despegaron. Con el dia en curso esto
-           # es lo que dice si el volumen esta completo o a mitad de camino.
-           'despegadas': sum(1 for p in crudas if p.get('real_epoch')),
+           # Cuantas de las partidas del periodo ya despegaron. Coincide con
+           # 'partidas' porque 'crudas' ya viene filtrada a solo confirmadas -- se
+           # deja el campo para no romper a quien lo consuma, pero el numero que
+           # importa ahora es 'partidas_totales' vs 'partidas'.
+           'despegadas': despegadas_total,
+           # Cuantas partidas del periodo NO tienen hora real todavia (programadas,
+           # demoradas, etc.) y por eso quedaron afuera de este calculo. Mismo
+           # concepto que 'programadas_sin_ocurrir' + 'no_salieron' en quien_cargo.
+           'partidas_totales': partidas_totales,
+           'sin_confirmar': partidas_totales - despegadas_total,
            'con_matricula': 0, 'tipo_resuelto': 0,
            'sin_flota': 0, 'avion_medido': 0, 'avion_estimado': 0,
            'sin_ruta': 0, 'sin_consumo': 0, 'sin_pax': 0,
