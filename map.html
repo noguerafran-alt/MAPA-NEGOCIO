@@ -2424,7 +2424,17 @@ function avionesTexto(a) {
   if (!v.avion_medido) s += '<br><i>velocidad genérica: sin matrícula en el registro</i>';
   // Un 0 de este feed es "no informado". Sólo 17% de las partidas traen pasajeros.
   s += '<br>Pasajeros: ' + (v.pax ? v.pax : '<i>no informados</i>');
-  s += '<br>Despegó ' + hora(v.salida_epoch) + ' · llega ~' + hora(v.llegada_epoch);
+  // DE DONDE SALE LA HORA DE DESPEGUE, porque cambia cuanto vale la posicion. AA2000
+  // publica la hora real con horas de retraso, asi que casi todo lo que esta volando
+  // ahora entra por su hora PROGRAMADA: el avion salio -- su estado lo dice -- pero si
+  // salio cinco minutos tarde, el dibujo va cinco minutos adelantado.
+  if (v.hora_base === 'programada') {
+    s += '<br>Salió ~' + hora(v.salida_epoch) + ' <i>(hora programada: AA2000 todavía no'
+       + ' publicó la real)</i>';
+  } else {
+    s += '<br>Despegó ' + hora(v.salida_epoch) + ' <i>(hora medida)</i>';
+  }
+  s += ' · llega ~' + hora(v.llegada_epoch);
   s += '<br>' + Math.round(a.f * 100) + '% del trayecto · ' + v.velocidad_kmh + ' km/h';
   s += '<br><i>Posición estimada por hora de despegue — no es seguimiento</i>';
   return s;
@@ -2440,7 +2450,11 @@ function avionesCartel(n) {
   const el = document.getElementById('aviones-sub');
   if (!el) return;
   const edad = avionesEdadTexto();
-  const s = avionesMotivo ? avionesMotivo : (n + ' en vuelo · estimado' + edad);
+  const prog = avionesDatos.filter(v => v.hora_base === 'programada').length;
+  const s = avionesMotivo
+    ? avionesMotivo
+    : (n + ' en vuelo · estimado' + (prog ? ' · ' + prog + ' por hora programada' : '')
+       + edad);
   if (s === avionesCartelUltimo) return;
   avionesCartelUltimo = s;
   el.textContent = s;

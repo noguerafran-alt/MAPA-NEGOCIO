@@ -508,6 +508,13 @@ def calcular(horas=24.0, coords=None, dia=None, desde=None, hasta=None):
 # calibrarlo el dia que se compare contra horas de arribo reales.
 MARGEN_PUNTAS_H = 25.0 / 60.0
 
+# QUE ESTADOS DE AA2000 SIGNIFICAN QUE EL AVION YA SALIO, cuando su hora programada paso
+# y todavia no hay hora real. Es lista BLANCA a proposito: lo que no esta nombrado no se
+# dibuja volando. Medido el 2026-09-12 sobre 531 partidas en esa situacion: 366 "En
+# Horario" y 25 "Cerrado" (salieron), contra 53 "Demorado", 38 "Pre Embarque", 20
+# "Embarcando" y 11 "Ultimo aviso", que dicen que el avion sigue en tierra.
+ESTADOS_YA_SALIO = ('en horario', 'cerrado')
+
 
 def en_el_aire(ahora=None, horas=36.0):
     """Los vuelos que, segun la hora de despegue MEDIDA, todavia estarian volando.
@@ -518,10 +525,27 @@ def en_el_aire(ahora=None, horas=36.0):
     existe de "esta aca", asi que cada vuelo viaja con lo que hace falta para que la
     pantalla lo diga: `estimado: True` y de donde sale cada pieza.
 
-    SOLO LAS QUE DESPEGARON CON HORA MEDIDA (`estado_partida() == 'despego'`). Sin un
-    instante de salida no hay donde poner el avion, y ponerlo en la hora programada seria
-    dibujar con precision de minutos algo que puede estar demorado media hora -- hay 31
-    "Demorado" en el feed. Las que quedan afuera se cuentan y se informan: son el 32%.
+    DOS FUENTES PARA LA HORA DE SALIDA, y la de abajo existe porque la de arriba sola
+    dejaba el cielo sin cabotaje.
+
+    Al principio esto pedia hora MEDIDA (`estado_partida() == 'despego'`), con el
+    argumento de que la programada puede estar demorada. El argumento sigue en pie pero
+    la conclusion estaba mal, y se vio mirando el feed: **AA2000 publica la hora real con
+    horas de retraso**. Medido el 2026-09-12 sobre la base del poller, que estaba vivo
+    (habia sondeado 6 minutos antes): de las 50 partidas programadas en las ultimas 3
+    horas, CERO tenian hora real, y en 6 horas no hubo ni una que dijera "Despegado" sin
+    su hora -- el estado y la hora aparecen juntos, tarde.
+
+    Para un vuelo de cabotaje eso es fatal: cuando su hora real se publica, ya aterrizo.
+    Por eso el mapa mostraba solo vuelos de larga distancia y parecia que el cabotaje
+    estaba filtrado. No estaba: llegaba tarde.
+
+    Entonces tambien entran las `sin_dato` -- las que su hora programada ya paso y nadie
+    capturo la real -- PERO solo si el estado no dice que siguen en tierra. Esa lista es
+    blanca y no negra: "En Horario" y "Cerrado" significan que salio, mientras que
+    "Embarcando", "Pre Embarque", "Ultimo aviso" y "Demorado" dicen que el avion todavia
+    esta ahi. Cada vuelo lleva `hora_base` ('medida' o 'programada') para que la pantalla
+    pueda decir cual de las dos esta usando.
 
     La posicion NO se calcula aca. Se mandan las dos puntas y los dos instantes, y el
     navegador interpola con su reloj: asi el avion se mueve solo, con UN pedido cada
@@ -547,20 +571,27 @@ def en_el_aire(ahora=None, horas=36.0):
     flota = avion_model.get_flota()
 
     est = {'partidas': len(crudas), 'despegadas': 0, 'en_el_aire': 0,
+           'por_hora_programada': 0,
            'sin_hora_medida': 0, 'sin_ruta': 0, 'aterrizados': 0,
            'avion_medido': 0, 'avion_desconocido': 0, 'con_pax': 0,
            'iata_desconocidos': {}}
     vuelos = []
 
     for p in crudas:
-        if estado_de(p) != 'despego':
-            est['sin_hora_medida'] += 1
-            continue
-        salida = p.get('real_epoch')
+        situacion = estado_de(p)
+        etiqueta = (p.get('estado') or '').strip().lower()
+        salida, hora_base = None, None
+        if situacion == 'despego' and p.get('real_epoch'):
+            salida, hora_base = p['real_epoch'], 'medida'
+        elif situacion == 'sin_dato' and etiqueta in ESTADOS_YA_SALIO:
+            # Su hora programada ya paso y el estado no la contradice: salio, lo que
+            # falta es que AA2000 publique la hora.
+            salida, hora_base = p.get('programada_epoch'), 'programada'
         if not salida:
             est['sin_hora_medida'] += 1
             continue
         est['despegadas'] += 1
+        est['por_hora_programada'] += 1 if hora_base == 'programada' else 0
 
         cod_o = (p.get('aeropuerto') or '').strip().upper()
         cod_d = (p.get('otro_aeropuerto') or '').strip().upper()
@@ -619,6 +650,9 @@ def en_el_aire(ahora=None, horas=36.0):
             'olat': c_o[0], 'olon': c_o[1], 'dlat': c_d[0], 'dlon': c_d[1],
             'distancia_km': round(dist, 1),
             'salida_epoch': salida, 'llegada_epoch': llegada,
+            # 'medida' o 'programada': la pantalla lo dice, porque una hora programada
+            # puede estar corrida y eso mueve el avion.
+            'hora_base': hora_base, 'estado': p.get('estado'),
             'velocidad_kmh': round(float(vel)),
             'pax': pax,
         })
