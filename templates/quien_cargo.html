@@ -603,6 +603,22 @@ function pintar(d) {
           `${Math.round((s.intervalo_s || 300) / 60)} min.`;
   }
   txt += ` &nbsp;·&nbsp; Ventana medida: ${fecha(d.desde_epoch)} .. ${fecha(d.hasta_epoch)} UTC.`;
+
+  // ---- el registro de matriculas (aircraft_db.sqlite). Sin esto el fallo era invisible:
+  // vivia solo en /api/quien-cargo como texto, y la pantalla nunca lo mostraba -- un
+  // registro que no bajo se veia identico a uno que bajo bien, salvo por MS RTIC
+  // estimando de mas en silencio.
+  const reg = s.registro || '';
+  if (reg.startsWith('fallo')) {
+    cl = "mal";
+    txt += ` &nbsp;·&nbsp; <b>Registro de matrículas: falló</b> — ${esc(reg)}.`;
+  } else if (reg === 'descargando') {
+    txt += ` &nbsp;·&nbsp; Registro de matrículas: descargando (MS RTIC estima con el modelo mientras tanto).`;
+  } else if (reg.startsWith('listo')) {
+    txt += ` &nbsp;·&nbsp; Registro de matrículas: ${esc(reg)}.`;
+  } else if (reg && reg !== 'sin construir') {
+    txt += ` &nbsp;·&nbsp; Registro de matrículas: ${esc(reg)}.`;
+  }
   const banda = document.getElementById("banda");
   banda.className = "banda " + cl;
   banda.innerHTML = txt;

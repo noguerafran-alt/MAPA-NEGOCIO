@@ -91,12 +91,28 @@ def _sondear_siempre():
         time.sleep(INTERVALO_S)
 
 
-def _construir_registro():
-    """Baja el registro de OpenSky y deja solo las dos columnas que se usan.
+REINTENTOS_REGISTRO_S = (300, 1800, 7200)   # 5 min, 30 min, 2 h -- despues deja de intentar
+LOTE_REGISTRO = 5000                        # filas por commit, para no abrir una transaccion gigante
 
-    El CSV completo son ~100 MB y 600.000 filas con 27 columnas; de eso hacen falta dos.
-    Se escribe en un archivo temporal y se renombra al final: si el proceso muere a mitad
-    de la descarga, no queda una base a medio llenar que el lookup daria por buena.
+
+def _construir_registro_intento():
+    """Un intento de bajar y parsear el registro. Devuelve True si quedo listo.
+
+    El CSV completo son ~100 MB y 609.000 filas con 27 columnas; de eso hacen falta dos, y
+    solo interesan las filas con `typecode`: sin eso no sirven para estimar el avion, y son
+    ~100.000 de las 609.000.
+
+    MEMORIA CONSTANTE A PROPOSITO. La version anterior hacia `r.read()` (94 MB de bytes),
+    `.decode()` (otra copia como str) y `io.StringIO(...)` (otra copia mas) y las mantenia
+    las tres vivas mientras iteraba: ~280 MB de pico encima de un proceso Flask/gunicorn ya
+    cargado, en una instancia chica eso es OOM. Aca se streamea la respuesta a un archivo
+    temporal en disco y se parsea leyendolo linea a linea con `csv.reader`: el pico es de
+    megabytes, no de cientos.
+
+    Se escribe en un archivo `.parcial` y se renombra (`os.replace`) recien al final: si el
+    proceso muere a mitad de camino no queda una base a medio llenar que el lookup daria
+    por buena. El commit es por lotes (`LOTE_REGISTRO` filas), no una transaccion unica,
+    para no acumular todo el trabajo sin confirmar en memoria/journal.
 
     EL DESTINO ES SIEMPRE EL DISCO, no `msrtic.base_aviones()`: esa funcion ahora cae a
     la semilla de datos/ cuando el disco todavia no tiene nada, y esa semilla YA EXISTE
@@ -107,34 +123,87 @@ def _construir_registro():
     destino = os.path.join(msrtic.DISCO, 'aircraft_db.sqlite')
     if os.path.exists(destino):
         ESTADO['registro'] = 'listo'
-        return
+        return True
+
+    # EL DISCO PUEDE NO ESTAR DONDE EL CODIGO CREE. render.yaml declara el disco en
+    # /var/data, pero el servicio real se creo a mano y no se administra con ese
+    # blueprint -- asi que existe la posibilidad real de que no este montado ahi, o que
+    # RENDER_DISK_PATH no este seteada. Sin este chequeo, un fallo de disco se ve
+    # identico a un OOM en el mensaje de error, y no hay forma de distinguirlos sin
+    # adivinar.
+    if not os.path.isdir(msrtic.DISCO):
+        ESTADO['registro'] = ('fallo: el directorio del disco no existe: %r '
+                               '(revisar montaje / RENDER_DISK_PATH)' % msrtic.DISCO)
+        return False
+    if not os.access(msrtic.DISCO, os.W_OK):
+        ESTADO['registro'] = 'fallo: sin permiso de escritura en %r' % msrtic.DISCO
+        return False
+
     tmp = destino + '.parcial'
+    con = None
     try:
         ESTADO['registro'] = 'descargando'
-        with urllib.request.urlopen(CSV_OPENSKY, timeout=300) as r:
-            datos = r.read()
         con = sqlite3.connect(tmp)
         con.execute('create table aircraft (registration text, typecode text)')
-        lector = csv.DictReader(io.StringIO(datos.decode('utf-8', 'replace')))
-        con.executemany('insert into aircraft values (?, ?)',
-                        (((f.get('registration') or '').strip(),
-                          (f.get('typecode') or '').strip())
-                         for f in lector))
+        n = 0
+        lote = []
+        with urllib.request.urlopen(CSV_OPENSKY, timeout=300) as r:
+            texto = io.TextIOWrapper(r, encoding='utf-8', errors='replace', newline='')
+            for f in csv.DictReader(texto):
+                typecode = (f.get('typecode') or '').strip()
+                if not typecode:
+                    continue
+                registration = (f.get('registration') or '').strip()
+                lote.append((registration, typecode))
+                if len(lote) >= LOTE_REGISTRO:
+                    con.executemany('insert into aircraft values (?, ?)', lote)
+                    con.commit()
+                    n += len(lote)
+                    lote = []
+            if lote:
+                con.executemany('insert into aircraft values (?, ?)', lote)
+                con.commit()
+                n += len(lote)
         con.execute('create index idx_reg on aircraft (registration)')
         con.commit()
-        n = con.execute('select count(*) from aircraft').fetchone()[0]
         con.close()
+        con = None
         os.replace(tmp, destino)
         ESTADO['registro'] = 'listo (%d aeronaves)' % n
+        return True
     except Exception as exc:                           # noqa: BLE001
         # Sin registro, MS RTIC estima TODOS los aviones con el modelo del mapa: se
         # pierde precision, no funcionalidad.
         ESTADO['registro'] = 'fallo: %s: %s' % (type(exc).__name__, exc)
+        return False
+    finally:
+        if con is not None:
+            try:
+                con.close()
+            except sqlite3.Error:
+                pass
         try:
             if os.path.exists(tmp):
                 os.remove(tmp)
         except OSError:
             pass
+
+
+def _construir_registro():
+    """Reintenta con backoff hasta que quede listo; deja de intentar cuando lo logra.
+
+    Un solo disparo por proceso significaba que, si fallaba, ESTADO quedaba en 'fallo'
+    hasta el proximo redeploy -- nadie lo iba a notar sin mirar el JSON. Los tiempos de
+    `REINTENTOS_REGISTRO_S` (5 min, 30 min, 2 h) no son un loop cerrado: son pocos
+    intentos espaciados, pensados para problemas transitorios de red, no para machacar
+    un fallo permanente (disco mal montado, por ejemplo) cada pocos segundos.
+    """
+    if _construir_registro_intento():
+        return
+    for espera in REINTENTOS_REGISTRO_S:
+        time.sleep(espera)
+        if _construir_registro_intento():
+            return
 
 
 def arrancar():
