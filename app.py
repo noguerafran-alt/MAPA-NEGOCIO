@@ -1381,10 +1381,17 @@ def analisis_quien_cargo_xlsx():
         'origen': 'partidas de AA2000 sondeadas por mapa-negocio web',
     }
 
+    # UNA SOLA HOJA si la piden: cada panel de la pantalla tiene su boton y baja lo suyo,
+    # ya filtrado. Un parametro y no tres endpoints -- son el mismo calculo y la misma
+    # lectura de filtros; separarlos seria mantener tres copias de esto.
+    hoja = (request.args.get('hoja') or '').strip().lower()
+    todas = (('por_aerolinea', aero), ('rutas', rutas), ('aviones', aviones))
+    elegidas = [x for x in todas if x[0] == hoja] or todas
+
     from openpyxl import Workbook
     wb = Workbook()
     primera = True
-    for nombre, filas in (('por_aerolinea', aero), ('rutas', rutas), ('aviones', aviones)):
+    for nombre, filas in elegidas:
         h = wb.active if primera else wb.create_sheet()
         h.title = nombre
         primera = False
@@ -1421,8 +1428,11 @@ def analisis_quien_cargo_xlsx():
                       else '%daerolineas' % len(aerolinea))
     if tipo:
         que += '-' + tipo
+    # La hoja va al principio del nombre: bajando varias secciones del mismo filtro, lo
+    # que las distingue es de que tabla salieron.
+    pre = (hoja + '-') if len(elegidas) == 1 else ''
     resp.headers['Content-Disposition'] = (
-        'attachment; filename=analisis-quien-cargo-%s.xlsx' % que)
+        'attachment; filename=analisis-%s%s.xlsx' % (pre, que))
     return resp
 
 

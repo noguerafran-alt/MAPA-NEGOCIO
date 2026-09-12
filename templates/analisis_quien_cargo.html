@@ -34,8 +34,8 @@
            border-radius: 6px; padding: 7px 10px; font-size: .9rem; cursor: pointer;
            min-width: 210px; list-style: none; user-select: none; }
   .menu > summary::-webkit-details-marker { display: none; }
-  .menu > summary::after { content: ' be'; color: #9aa0a6; float: right; }
-  .menu[open] > summary::after { content: ' b4'; }
+  .menu > summary::after { content: ' ▾'; color: #9aa0a6; float: right; }
+  .menu[open] > summary::after { content: ' ▴'; }
   .panel-menu { position: absolute; z-index: 20; margin-top: 4px; background: #11141a;
            border: 1px solid #2b313b; border-radius: 8px; padding: 6px;
            min-width: 260px; box-shadow: 0 8px 24px #0008; }
@@ -53,6 +53,10 @@
            border-radius: 6px; padding: 8px 14px; font-size: .88rem; font-family: inherit;
            cursor: pointer; text-decoration: none; display: inline-block; }
   .boton:hover { background: #16324f; }
+  .boton.chico { padding: 4px 10px; font-size: .78rem; }
+  .cabecera-panel { display: flex; align-items: center; justify-content: space-between;
+           gap: 12px; margin-bottom: 12px; }
+  .cabecera-panel h2 { margin: 0; }
   .sep { width: 1px; align-self: stretch; background: #2b313b; margin: 0 4px; }
   label { color: #9aa0a6; font-size: .85rem; }
 
@@ -129,7 +133,7 @@
 <div class="panel"><div class="kpis" id="kpis"></div></div>
 
 <div class="panel">
-  <h2>Por aerolínea</h2>
+  <div class="cabecera-panel"><h2>Por aerolínea</h2><a class="boton chico" data-hoja="por_aerolinea" href="#">Excel de esta tabla</a></div>
   <div class="scroll"><table id="t-aero"></table></div>
   <p class="nota">
     <b>MS YPF</b> va como rango: el piso son los m³ de las rutas que la planilla
@@ -152,7 +156,7 @@
 </div>
 
 <div class="panel">
-  <h2>Rutas</h2>
+  <div class="cabecera-panel"><h2>Rutas</h2><a class="boton chico" data-hoja="rutas" href="#">Excel de esta tabla</a></div>
   <div class="scroll"><table id="t-rutas"></table></div>
   <p class="nota" id="nota-rutas">
     <b>Abastece</b> se edita acá mismo y escribe en la MISMA planilla que usa el mapa
@@ -163,7 +167,7 @@
 </div>
 
 <div class="panel">
-  <h2>Aviones que operaron</h2>
+  <div class="cabecera-panel"><h2>Aviones que operaron</h2><a class="boton chico" data-hoja="aviones" href="#">Excel de esta tabla</a></div>
   <div class="scroll"><table id="t-aviones"></table></div>
 </div>
 
@@ -520,6 +524,12 @@ function cargar() {
   document.getElementById('f-dia').disabled = hayRango;
   document.getElementById('b-limpiar').hidden = !hayRango;
   document.getElementById('b-excel').href = '/analisis-quien-cargo.xlsx?' + p.toString();
+  // Cada panel baja SU tabla con los mismos filtros: mismo endpoint, una hoja.
+  document.querySelectorAll('[data-hoja]').forEach(a => {
+    const q = new URLSearchParams(p);
+    q.set('hoja', a.dataset.hoja);
+    a.href = '/analisis-quien-cargo.xlsx?' + q.toString();
+  });
   const dia = p.get('dia') || '';
   const aero = p.getAll('aerolinea');
   fetch('/api/analisis-quien-cargo?' + p.toString())
