@@ -50,7 +50,9 @@
   th, td { text-align: right; padding: 7px 10px; border-bottom: 1px solid #232833; }
   th:first-child, td:first-child { text-align: left; }
   th { color: #9aa0a6; font-weight: 600; font-size: .78rem; text-transform: uppercase;
-       letter-spacing: .04em; }
+       letter-spacing: .04em; cursor: pointer; user-select: none; white-space: nowrap; }
+  th:hover { color: #e6e6e6; }
+  th .flecha { color: #60a5fa; font-size: .7rem; }
   td { font-variant-numeric: tabular-nums; }
   tr:hover td { background: #161a21; }
   .sindato { color: #4b5563; }
@@ -232,13 +234,73 @@ async function guardarProveedor(el) {
   }
 }
 
+// El orden elegido por tabla, para poder reponerlo despues de cada repintada: la
+// pantalla se vuelve a pedir entera al guardar un proveedor, y perder el orden ahi
+// obligaria a volver a clickear cada vez.
+const ORDEN = {};
+
+// Numero de una celda ya formateada: "8.369,4" -> 8369.4, "30,3 min" -> 30.3,
+// "72,3-74,0%" -> 72.3 (el piso del rango, que es por donde se compara), "120,4%*" ->
+// 120.4. "sin dato" no es 0 y devuelve null: un vuelo sin ocupacion informada no puede
+// quedar ordenado como si tuviera cero.
+function celdaNum(td) {
+  const t = td.textContent.trim();
+  if (!t || /sin dato/i.test(t)) return null;
+  const m = t.replace(/\./g, '').match(/-?\d+(?:,\d+)?/);
+  return m ? parseFloat(m[0].replace(',', '.')) : null;
+}
+
+function ordenar(el, i, desc) {
+  const cuerpo = el.tBodies[0];
+  if (!cuerpo) return;
+  const filas = [...cuerpo.rows];
+  // Numerico si TODA la columna con dato lo es; si no, alfabetico. Asi la primera
+  // columna (nombres) ordena como texto sin tener que declararlo en ningun lado.
+  const nums = filas.map(f => f.cells[i] ? celdaNum(f.cells[i]) : null);
+  const esNum = nums.some(n => n !== null) &&
+                filas.every((f, k) => nums[k] !== null ||
+                                      !f.cells[i] || !f.cells[i].textContent.trim() ||
+                                      /sin dato/i.test(f.cells[i].textContent));
+  filas.sort((a, b) => {
+    if (esNum) {
+      const x = celdaNum(a.cells[i]), y = celdaNum(b.cells[i]);
+      // Las filas sin dato van SIEMPRE al final, se ordene como se ordene: son las que
+      // no se saben, no las mas chicas.
+      if (x === null && y === null) return 0;
+      if (x === null) return 1;
+      if (y === null) return -1;
+      return desc ? y - x : x - y;
+    }
+    const x = a.cells[i].textContent.trim(), y = b.cells[i].textContent.trim();
+    return desc ? y.localeCompare(x, 'es') : x.localeCompare(y, 'es');
+  });
+  filas.forEach(f => cuerpo.appendChild(f));
+  [...el.tHead.rows[0].cells].forEach((th, k) => {
+    const flecha = th.querySelector('.flecha');
+    if (flecha) flecha.textContent = k === i ? (desc ? ' ▼' : ' ▲') : '';
+  });
+}
+
 function tabla(el, cols, filas, fila) {
   if (!filas.length) {
     el.innerHTML = '<tr><td class="empty">Sin datos para este filtro.</td></tr>';
     return;
   }
-  el.innerHTML = '<thead><tr>' + cols.map(c => '<th>' + c + '</th>').join('') +
+  el.innerHTML = '<thead><tr>' + cols.map(c =>
+      '<th>' + c + '<span class="flecha"></span></th>').join('') +
     '</tr></thead><tbody>' + filas.map(fila).join('') + '</tbody>';
+  [...el.tHead.rows[0].cells].forEach((th, i) => {
+    th.addEventListener('click', () => {
+      const previo = ORDEN[el.id];
+      // Primer click en una columna: DESCENDENTE. En una tabla de volumenes la
+      // pregunta es "quien es el que mas", no "quien es el que menos".
+      const desc = (previo && previo.i === i) ? !previo.desc : true;
+      ORDEN[el.id] = {i, desc};
+      ordenar(el, i, desc);
+    });
+  });
+  const o = ORDEN[el.id];
+  if (o && o.i < cols.length) ordenar(el, o.i, o.desc);
 }
 
 function pintar(d) {
