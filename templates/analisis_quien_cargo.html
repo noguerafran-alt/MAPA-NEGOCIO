@@ -29,8 +29,23 @@
 
   .filtros { display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
              margin-bottom: 6px; }
-  select[multiple] { min-width: 230px; padding: 4px 6px; }
-  select[multiple] option { padding: 2px 4px; }
+  .menu { position: relative; }
+  .menu > summary { background: #11141a; color: #e6e6e6; border: 1px solid #2b313b;
+           border-radius: 6px; padding: 7px 10px; font-size: .9rem; cursor: pointer;
+           min-width: 210px; list-style: none; user-select: none; }
+  .menu > summary::-webkit-details-marker { display: none; }
+  .menu > summary::after { content: ' be'; color: #9aa0a6; float: right; }
+  .menu[open] > summary::after { content: ' b4'; }
+  .panel-menu { position: absolute; z-index: 20; margin-top: 4px; background: #11141a;
+           border: 1px solid #2b313b; border-radius: 8px; padding: 6px;
+           min-width: 260px; box-shadow: 0 8px 24px #0008; }
+  .panel-menu .lista { max-height: 260px; overflow-y: auto; }
+  .opt { display: flex; align-items: center; gap: 8px; padding: 5px 8px;
+           border-radius: 5px; cursor: pointer; font-size: .88rem; color: #e6e6e6;
+           white-space: nowrap; }
+  .opt:hover { background: #1a1f28; }
+  .opt.todas { border-bottom: 1px solid #2b313b; margin-bottom: 4px; padding-bottom: 8px; }
+  .opt input { accent-color: #60a5fa; cursor: pointer; }
   select, input[type=date] { background: #11141a; color: #e6e6e6; border: 1px solid #2b313b;
            border-radius: 6px; padding: 7px 10px; font-size: .9rem; font-family: inherit; }
   input[type=date]::-webkit-calendar-picker-indicator { filter: invert(.7); cursor: pointer; }
@@ -89,11 +104,17 @@
   <label>hasta <input type="date" id="f-hasta"></label>
   <button class="boton" id="b-limpiar" type="button" hidden>Quitar rango</button>
   <div class="sep"></div>
-  {# `multiple` nativo: ctrl/cmd+click para varias, sin libreria. La opcion "Todas"
-     se va -- en un multiple, "ninguna elegida" YA significa todas, y dejarla seria una
-     opcion que contradice a las otras si se seleccionan juntas. #}
-  <label>Aerolínea <select id="f-aerolinea" multiple size="4"></select></label>
-  <button class="boton" id="b-todas" type="button" hidden>Todas</button>
+  {# Desplegable con casillas: `details`/`summary` nativos. Se abre y cierra solo, sin
+     una linea de JS para eso y sin libreria -- esta pantalla no carga nada de afuera.
+     Un `select multiple` obligaba a ctrl+click, que casi nadie descubre, y ocupaba
+     cuatro renglones fijos aunque no se usara. #}
+  <details class="menu" id="f-aerolinea">
+    <summary><span class="etiqueta-sel">Todas las aerolíneas</span></summary>
+    <div class="panel-menu">
+      <label class="opt todas"><input type="checkbox" id="chk-todas" checked> <b>Todas</b></label>
+      <div class="lista" id="lista-aerolineas"></div>
+    </div>
+  </details>
   <label>Tipo <select id="f-tipo">
     <option value="">Cabotaje + internacional</option>
     <option value="cabotaje">Solo cabotaje</option>
@@ -250,8 +271,8 @@ async function guardarProveedor(el) {
     // proveedor declara una EXCEPCION para esa compania y no reescribe la ruta para
     // todas. Es lo que el usuario esta mirando; hacer lo otro cambiaria vuelos que no
     // tiene en pantalla.
-    const elegidas = [...document.getElementById('f-aerolinea').selectedOptions];
-    const aerolinea = elegidas.length === 1 ? elegidas[0].value : null;
+    const elegidas = aeroElegidas();
+    const aerolinea = elegidas.length === 1 ? elegidas[0] : null;
     const r = await fetch('/api/quien-cargo/proveedor', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -402,8 +423,8 @@ function pintar(d) {
   // La excepcion de la planilla es por UNA compania. Con varias elegidas no hay a cual
   // atribuir el cambio, asi que el selector vuelve a editar la ruta entera y el
   // encabezado lo dice.
-  const sels = [...document.getElementById('f-aerolinea').selectedOptions];
-  const aeroFiltrada = sels.length === 1 ? sels[0].value : '';
+  const sels = aeroElegidas();
+  const aeroFiltrada = sels.length === 1 ? sels[0] : '';
   tabla(document.getElementById('t-rutas'),
     ['Ruta', 'Tipo', aeroFiltrada ? 'Abastece (excepción ' + esc(aeroFiltrada) + ')'
                                   : 'Abastece', 'Vuelos', 'Km', 'Aviones', 'm³'],
@@ -441,6 +462,24 @@ function pintar(d) {
     aviones, ([c, n]) => '<tr><td>' + esc(c) + '</td><td>' + num(n) + '</td></tr>');
 }
 
+function casillas() {
+  return [...document.querySelectorAll('#lista-aerolineas input[type=checkbox]')];
+}
+function aeroElegidas() {
+  return casillas().filter(c => c.checked).map(c => c.value);
+}
+// El resumen del desplegable: sin nada tildado son todas; con pocas, sus codigos; con
+// muchas, cuantas -- enumerar quince no entra y no se lee.
+function pintarResumen() {
+  const e = aeroElegidas();
+  const chk = document.getElementById('chk-todas');
+  chk.checked = e.length === 0;
+  const txt = e.length === 0 ? 'Todas las aerolíneas'
+            : e.length <= 3 ? e.join(', ')
+            : e.length + ' aerolíneas';
+  document.querySelector('#f-aerolinea .etiqueta-sel').textContent = txt;
+}
+
 function opciones(sel, items, valor) {
   const v = sel.value;
   sel.innerHTML = (sel.id === 'f-aerolinea' ? '<option value="">Todas</option>' : '') +
@@ -455,7 +494,7 @@ function filtros() {
   const desde = document.getElementById('f-desde').value;
   const hasta = document.getElementById('f-hasta').value;
   const dia = document.getElementById('f-dia').value;
-  const aero = [...document.getElementById('f-aerolinea').selectedOptions].map(o => o.value);
+  const aero = aeroElegidas();
   const tipo = document.getElementById('f-tipo').value;
   // EL RANGO MANDA sobre el dia, igual que en el backend: son dos formas de cortar lo
   // mismo y mandar las dos daria un recorte que nadie pidio.
@@ -483,7 +522,6 @@ function cargar() {
   document.getElementById('b-excel').href = '/analisis-quien-cargo.xlsx?' + p.toString();
   const dia = p.get('dia') || '';
   const aero = p.getAll('aerolinea');
-  document.getElementById('b-todas').hidden = !aero.length;
   fetch('/api/analisis-quien-cargo?' + p.toString())
     .then(r => r.json())
     .then(d => {
@@ -493,11 +531,21 @@ function cargar() {
           (d.dias || []).map(x => ({v: x.dia, t: x.dia + ' (' + x.despegadas + ')'}))),
         dia || d.dia);
       PROVEEDORES = (d.proveedores && d.proveedores.length) ? d.proveedores : ['YPF'];
-      const sel = document.getElementById('f-aerolinea');
-      const elegidas = new Set(aero);
-      sel.innerHTML = (d.companias || []).map(c =>
-        '<option value="' + esc(c.id) + '"' + (elegidas.has(c.id) ? ' selected' : '') +
-        '>' + esc(c.nombre) + '</option>').join('');
+      // LA LISTA SE REDIBUJA SOLO SI CAMBIARON LAS COMPANIAS. Rehacerla en cada carga
+      // reemplazaba los checkbox mientras el desplegable estaba abierto: la segunda
+      // casilla que alguien tildaba caia sobre un elemento que ya no existia y se
+      // perdia el click.
+      const firma = (d.companias || []).map(c => c.id).join('|');
+      const lista = document.getElementById('lista-aerolineas');
+      if (lista.dataset.firma !== firma) {
+        lista.dataset.firma = firma;
+        const elegidas = new Set(aero);
+        lista.innerHTML = (d.companias || []).map(c =>
+          '<label class="opt"><input type="checkbox" value="' + esc(c.id) + '"' +
+          (elegidas.has(c.id) ? ' checked' : '') + '> ' + esc(c.nombre) +
+          ' <span class="sindato">' + esc(c.id) + '</span></label>').join('');
+      }
+      pintarResumen();
       pintar(d);
     })
     .catch(e => {
@@ -508,12 +556,28 @@ function cargar() {
     .finally(() => { cargando = false; });
 }
 
-['f-dia', 'f-desde', 'f-hasta', 'f-aerolinea', 'f-tipo'].forEach(
+['f-dia', 'f-desde', 'f-hasta', 'f-tipo'].forEach(
   id => document.getElementById(id).addEventListener('change', cargar));
-document.getElementById('b-todas').addEventListener('click', () => {
-  [...document.getElementById('f-aerolinea').options].forEach(o => { o.selected = false; });
+
+// Cerrar al clickear afuera: es lo unico que `details` no hace solo.
+document.addEventListener('click', e => {
+  const m = document.getElementById('f-aerolinea');
+  if (m.open && !m.contains(e.target)) m.open = false;
+});
+// "Todas" y las individuales son el mismo estado visto de dos formas: destildar todas
+// las companias ES "todas", asi que la casilla de arriba se calcula, no se guarda.
+document.getElementById('chk-todas').addEventListener('change', e => {
+  if (e.target.checked) {
+    casillas().forEach(c => { c.checked = false; });
+  } else {
+    // Destildar "Todas" sin elegir ninguna dejaria la pantalla sin filtro Y sin marca:
+    // se vuelve a tildar y no pasa nada hasta que se elija una compania.
+    e.target.checked = true;
+    return;
+  }
   cargar();
 });
+document.getElementById('lista-aerolineas').addEventListener('change', cargar);
 document.getElementById('b-limpiar').addEventListener('click', () => {
   document.getElementById('f-desde').value = '';
   document.getElementById('f-hasta').value = '';
