@@ -509,7 +509,13 @@ def calcular(horas=24.0, coords=None, dia=None, desde=None, hasta=None):
                  bandera, motivo)
         f = acum.setdefault(clave, {'vuelos': 0, 'pax': 0, 'con_pax': 0,
                                     'con_pax_pos': 0, 'm3': 0.0,
-                                    'medidos': 0, 'estimados': 0, 'aviones': {}})
+                                    'medidos': 0, 'estimados': 0, 'aviones': {},
+                                    # EL IATA DE LA RUTA, que la planilla de proveedores
+                                    # usa como clave ('EZE-MAD'). La fila agrupa por
+                                    # NOMBRE de aeropuerto, asi que sin esto quien quiera
+                                    # editar la planilla desde una fila no tiene con que:
+                                    # 'Ezeiza' no es una clave de la tabla.
+                                    'cod_o': cod_o, 'cod_d': cod_d})
         f['vuelos'] += 1
         if pax is not None:
             f['pax'] += pax
@@ -532,6 +538,9 @@ def calcular(horas=24.0, coords=None, dia=None, desde=None, hasta=None):
     for (tipo, o, d, aero, aero_id, bandera, motivo), v in sorted(acum.items()):
         filas_out.append({
             'tipo': tipo, 'origin': o, 'dest': d,
+            # Los IATA van al lado del nombre, no en su lugar: la pantalla muestra
+            # "Ezeiza" y la planilla se indexa por "EZE".
+            'cod_o': v['cod_o'], 'cod_d': v['cod_d'],
             'aerolinea': aero, 'aerolinea_id': aero_id,
             # 'YPF' | 'Axion' | 'Raizen' | 'sin_declarar'. El competidor va con su
             # nombre: la planilla lo nombra, asi que llamarlo "competencia" seria

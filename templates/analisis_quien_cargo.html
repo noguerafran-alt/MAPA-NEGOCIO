@@ -94,10 +94,11 @@
 <div class="panel">
   <h2>Rutas</h2>
   <div class="scroll"><table id="t-rutas"></table></div>
-  <p class="nota">
-    Para cambiar quién abastece una ruta, se edita la planilla en
-    <a href="/quien-cargo">Quién le cargó</a> — es la misma tabla que usa el mapa, y
-    tener dos editores sería tener dos verdades.
+  <p class="nota" id="nota-rutas">
+    <b>Abastece</b> se edita acá mismo y escribe en la MISMA planilla que usa el mapa
+    y <a href="/quien-cargo">Quién le cargó</a> — no hay una copia aparte.
+    <i>sin declarar</i> borra la declaración: una ruta sin declarar se cuenta como
+    hueco, que no es lo mismo que declararla "sin resolver".
   </p>
 </div>
 
@@ -107,6 +108,16 @@
 </div>
 
 <script>
+// Nivel 2 es el que puede CAMBIAR la planilla, igual que en /quien-cargo: leer la
+// tabla es una cosa y cambiarla es otra. Con nivel 1 la columna se muestra de solo
+// lectura en vez de ofrecer un control que el backend va a rechazar.
+const NIVEL = {{ nivel|int }};
+
+// Fuera de AEP/EZE/COR no hay competencia: esas partidas son de YPF por la regla de
+// negocio y el backend RECHAZA declararlas. Se deshabilita acá para que el usuario
+// vea por que, en vez de recibir un error despues de elegir.
+const CON_COMPETENCIA = ['AEP', 'EZE', 'COR'];
+
 function esc(v) {
   return String(v == null ? "" : v).replace(/[&<>"']/g, c => (
     {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -122,6 +133,64 @@ function tagProveedor(p) {
   if (p === 'YPF') return '<span class="tag ypf">YPF</span>';
   if (p === 'sin_declarar') return '<span class="tag nadie">sin declarar</span>';
   return '<span class="tag otro">' + esc(p) + '</span>';
+}
+
+// Los proveedores que se pueden elegir salen de los que aparecen EN LOS DATOS, no de
+// una lista fija en el codigo: si manana entra una petrolera nueva a la planilla,
+// aparece sola en el selector. 'YPF' va siempre aunque el dia no tenga ninguna.
+let PROVEEDORES = ['YPF'];
+
+function selectProveedor(f) {
+  // Por IATA, no por nombre: 'Ezeiza' no es clave de nada.
+  const editable = NIVEL >= 2 && CON_COMPETENCIA.includes(f.cod_o);
+  if (!editable) {
+    const t = tagProveedor(f.proveedor);
+    if (NIVEL >= 2) {
+      // Se dice POR QUE no se puede editar. Un control deshabilitado sin explicacion
+      // se lee como un bug.
+      return '<span title="Fuera de AEP, EZE y COR no hay competencia: son de YPF por ' +
+             'la regla de negocio y no se declaran.">' + t + '</span>';
+    }
+    return t;
+  }
+  const act = (f.proveedor === 'sin_declarar' ? '' : f.proveedor) || '';
+  const vistos = new Set(PROVEEDORES);
+  if (act) vistos.add(act);
+  const opts = ['<option value="">sin declarar</option>'].concat(
+    [...vistos].sort().map(p =>
+      '<option value="' + esc(p) + '"' + (p === act ? ' selected' : '') + '>' +
+      esc(p) + '</option>')).join('');
+  return '<select class="prov" data-ruta="' + esc(f.origin + '-' + f.dest) + '" ' +
+         'data-antes="' + esc(act) + '">' + opts + '</select>';
+}
+
+async function guardarProveedor(el) {
+  const antes = el.dataset.antes || '';
+  el.disabled = true;
+  try {
+    // LA AEROLINEA FILTRADA VIAJA EN EL PEDIDO: con un filtro puesto, cambiar el
+    // proveedor declara una EXCEPCION para esa compania y no reescribe la ruta para
+    // todas. Es lo que el usuario esta mirando; hacer lo otro cambiaria vuelos que no
+    // tiene en pantalla.
+    const aerolinea = document.getElementById('f-aerolinea').value || null;
+    const r = await fetch('/api/quien-cargo/proveedor', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ruta: el.dataset.ruta, aerolinea: aerolinea,
+                            proveedor: el.value, desde: '/analisis-quien-cargo'}),
+    });
+    const j = await r.json();
+    if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
+    // Se vuelve a pedir todo: el cambio mueve el MS, los m3 por proveedor y los KPIs.
+    // Parchear solo la fila dejaria los totales mostrando algo que ya no corresponde.
+    cargar();
+  } catch (e) {
+    // Volver al valor anterior. Dejar el select en lo que el usuario eligio despues
+    // de que la escritura fallo es la peor mentira posible aca.
+    el.value = antes;
+    el.disabled = false;
+    alert('No se pudo guardar: ' + e.message);
+  }
 }
 
 function tabla(el, cols, filas, fila) {
@@ -182,11 +251,13 @@ function pintar(d) {
       '<td>' + (f.ms_ypf_piso == null ? '<span class="sindato">sin dato</span>'
                 : num(f.ms_ypf_piso, 1) + '–' + num(f.ms_ypf_techo, 1) + '%') + '</td></tr>');
 
+  const aeroFiltrada = document.getElementById('f-aerolinea').value;
   tabla(document.getElementById('t-rutas'),
-    ['Ruta', 'Tipo', 'Abastece', 'Vuelos', 'Km', 'Aviones', 'm³'],
+    ['Ruta', 'Tipo', aeroFiltrada ? 'Abastece (excepción ' + esc(aeroFiltrada) + ')'
+                                  : 'Abastece', 'Vuelos', 'Km', 'Aviones', 'm³'],
     d.rutas, f => '<tr><td>' + esc(f.origin) + ' → ' + esc(f.dest) + '</td>' +
       '<td>' + esc(f.tipo) + '</td>' +
-      '<td>' + tagProveedor(f.proveedor) + '</td>' +
+      '<td>' + selectProveedor(f) + '</td>' +
       '<td>' + num(f.vuelos) + '</td>' +
       '<td>' + num(f.distancia_km) + '</td>' +
       '<td>' + esc((f.aviones || []).join(', ')) + '</td>' +
@@ -194,6 +265,22 @@ function pintar(d) {
 
   // El listado de aviones se arma acá y no en el backend: es un conteo de la misma
   // lista de rutas que ya vino, y pedirlo aparte sería una cuenta más para mantener.
+  document.querySelectorAll('select.prov').forEach(
+    el => el.addEventListener('change', () => guardarProveedor(el)));
+  // La nota dice el alcance real de lo que se va a guardar, que cambia con el filtro.
+  const nota = document.getElementById('nota-rutas');
+  if (nota && NIVEL >= 2) {
+    nota.querySelectorAll('.alcance').forEach(x => x.remove());
+    const span = document.createElement('span');
+    span.className = 'alcance';
+    span.innerHTML = aeroFiltrada
+      ? ' <b>Con ' + esc(aeroFiltrada) + ' filtrada, el cambio se guarda como excepción ' +
+        'de esa compañía</b>, no como el proveedor de la ruta entera.'
+      : ' El cambio aplica a la ruta para <b>todas</b> las compañías; para declarar una ' +
+        'excepción, filtrá primero por aerolínea.';
+    nota.appendChild(span);
+  }
+
   const porTipo = {};
   d.rutas.forEach(r => (r.aviones || []).forEach(
     c => { porTipo[c] = (porTipo[c] || 0) + r.vuelos; }));
@@ -228,6 +315,8 @@ function cargar() {
         [{v: 'todo', t: 'Todo el histórico'}].concat(
           (d.dias || []).map(x => ({v: x.dia, t: x.dia + ' (' + x.despegadas + ')'}))),
         dia || d.dia);
+      PROVEEDORES = [...new Set(['YPF'].concat(
+        Object.keys(d.m3_por_proveedor || {}).filter(p => p !== 'sin_declarar')))];
       opciones(document.getElementById('f-aerolinea'),
         (d.companias || []).map(c => ({v: c.id, t: c.nombre})), aero);
       pintar(d);

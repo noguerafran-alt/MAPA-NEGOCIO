@@ -172,6 +172,7 @@ def analisis(dia=None, horas=24.0, aerolinea=None, tipo=None, desde=None, hasta=
         # copian, no se acumulan.
         r["proveedor"], r["motivo"] = f["proveedor"], f["motivo"]
         r["distancia_km"] = f.get("distancia_km")
+        r["cod_o"], r["cod_d"] = f.get("cod_o"), f.get("cod_d")
 
     # Puntualidad: partidas crudas, no las filas agregadas de msrtic.
     tab = quien_cargo.tablero(msrtic.base_oficial(), horas=horas, dia=dia)
@@ -190,7 +191,11 @@ def analisis(dia=None, horas=24.0, aerolinea=None, tipo=None, desde=None, hasta=
     rutas = []
     for (t, o, d), v in por_ruta.items():
         fila = _cerrar(v)
-        fila.update(tipo=t, origin=o, dest=d, proveedor=v["proveedor"],
+        fila.update(tipo=t, origin=o, dest=d,
+                    # Los IATA viajan para que la pantalla pueda editar la planilla,
+                    # que se indexa por codigo y no por nombre de aeropuerto.
+                    cod_o=v.get("cod_o"), cod_d=v.get("cod_d"),
+                    proveedor=v["proveedor"],
                     motivo=v["motivo"], distancia_km=v.get("distancia_km"),
                     # "Cubierta" es que la planilla diga que carga YPF. Un
                     # 'sin_declarar' NO es una ruta que perdimos: es una que nadie

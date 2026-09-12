@@ -1777,8 +1777,16 @@ def api_quien_cargo_proveedor():
         que = 'ruta %s' % ruta
 
     actual['actualizado'] = datetime.now().date().isoformat()
-    actual['fuente'] = ('editada a mano desde /quien-cargo por %s (ultimo cambio: %s)'
-                        % (session.get('user_email', '?'), que))
+    # DE QUE PANTALLA SALIO EL CAMBIO. Lo manda el cliente porque son dos las que
+    # editan esta planilla (/quien-cargo y /analisis-quien-cargo) y dejar fijo el
+    # primero haria que la mitad de las correcciones quedaran registradas en la
+    # pantalla equivocada. Se acota a las conocidas: es texto del cliente y termina
+    # guardado en un archivo que despues se lee como auditoria.
+    desde = str(d.get('desde') or '/quien-cargo').strip()
+    if desde not in ('/quien-cargo', '/analisis-quien-cargo'):
+        desde = '/quien-cargo'
+    actual['fuente'] = ('editada a mano desde %s por %s (ultimo cambio: %s)'
+                        % (desde, session.get('user_email', '?'), que))
     try:
         destino_json.parent.mkdir(parents=True, exist_ok=True)
         destino_json.write_text(
