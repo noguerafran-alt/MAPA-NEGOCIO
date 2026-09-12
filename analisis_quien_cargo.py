@@ -52,10 +52,13 @@ def _puntualidad(filas):
     out = {}
     for f in filas:
         k = (f.get("aerolinea_id") or "").strip().upper()
-        d = out.setdefault(k, {"atrasos": [], "cancelados": 0, "vuelos": 0})
+        d = out.setdefault(k, {"atrasos": [], "cancelados": 0, "vuelos": 0, "salieron": 0})
         d["vuelos"] += 1
-        if f.get("situacion") == "no_salio":
+        sit = f.get("situacion")
+        if sit == "no_salio":
             d["cancelados"] += 1
+        elif sit == "despego":
+            d["salieron"] += 1
         m = _min_atraso(f)
         if m is not None:
             d["atrasos"].append(m)
@@ -65,6 +68,35 @@ def _puntualidad(filas):
         d["atraso_prom_min"] = round(sum(max(m, 0) for m in a) / len(a), 1) if a else None
         d["puntualidad"] = (round(100.0 * sum(1 for m in a if m <= PUNTUAL_MIN) / len(a), 1)
                             if a else None)
+
+        # EL DENOMINADOR SON LAS PARTIDAS YA RESUELTAS: salio o no salio. Las que
+        # todavia no despegaron y las que no tienen dato NO entran -- incluirlas haria
+        # que la tasa de cancelacion baje sola a lo largo del dia a medida que se llena
+        # el tablero, y que a la manana toda aerolinea parezca perfecta.
+        resueltas = d["salieron"] + d["cancelados"]
+        d["resueltas"] = resueltas
+        d["cancelados_pct"] = (round(100.0 * d["cancelados"] / resueltas, 1)
+                               if resueltas else None)
+        # Completion factor: el nombre que usa la industria para "de lo programado,
+        # cuanto se llego a operar".
+        completion = (100.0 - d["cancelados_pct"]) if d["cancelados_pct"] is not None else None
+
+        # INDICE DE SERVICIO = completion x puntualidad. Es la probabilidad de que un
+        # vuelo salga Y salga a horario, en un solo numero.
+        #
+        # Multiplicar y no promediar con pesos: un promedio ponderado necesita elegir
+        # cuanto pesa cada mitad, y esa eleccion no sale de ningun lado. El producto no
+        # tiene parametros y ademas se lee literal -- "de cada 100 partidas resueltas,
+        # tantas salieron dentro de los 15 minutos" -- porque son dos condiciones que
+        # se tienen que cumplir las dos.
+        #
+        # OJO CON EL SESGO: la puntualidad se mide sobre las partidas que TIENEN hora
+        # real medida, que son menos que las resueltas. `con_hora` y `resueltas` viajan
+        # al lado para que se pueda ver sobre cuanto se calculo cada mitad; con pocas
+        # horas medidas el indice dice mas de la cobertura del feed que de la aerolinea.
+        d["indice_servicio"] = (round(completion * d["puntualidad"] / 100.0, 1)
+                                if (completion is not None and d["puntualidad"] is not None)
+                                else None)
         del d["atrasos"]
     return out
 
@@ -313,6 +345,23 @@ def _self_check():
         # Un tipo desconocido no entra al promedio en vez de contar como cero asientos.
         dos = _asientos({"aviones_n": {a: 1, "ZZZZ": 5}})
         assert abs(dos - sa) < 1e-6, dos
+
+    # Cancelaciones e indice de servicio.
+    q = _puntualidad([
+        # 2 salieron (una puntual, una tarde), 1 cancelado, 1 todavia programado.
+        {"aerolinea_id": "AR", "programada_epoch": 1000, "real_epoch": 1000 + 5 * 60,
+         "situacion": "despego"},
+        {"aerolinea_id": "AR", "programada_epoch": 1000, "real_epoch": 1000 + 60 * 60,
+         "situacion": "despego"},
+        {"aerolinea_id": "AR", "situacion": "no_salio"},
+        {"aerolinea_id": "AR", "situacion": "programada"},
+    ])["AR"]
+    # El denominador son las 3 resueltas, NO las 4 filas: la programada no se cuenta.
+    assert q["resueltas"] == 3, q
+    assert q["cancelados_pct"] == 33.3, q
+    assert q["puntualidad"] == 50.0, q
+    # completion 66.7% x puntualidad 50% = 33.4%
+    assert q["indice_servicio"] == 33.4, q
 
     # Puntualidad: un vuelo adelantado no compensa a uno atrasado.
     p = _puntualidad([

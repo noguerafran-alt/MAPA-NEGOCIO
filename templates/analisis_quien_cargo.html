@@ -57,6 +57,7 @@
   tr:hover td { background: #161a21; }
   .sindato { color: #4b5563; }
   .alto { color: #fbbf24; cursor: help; }
+  .flojo { color: #6b7280; cursor: help; }
   .tag { font-size: .72rem; padding: 2px 7px; border-radius: 999px; }
   .tag.ypf { background: #10243a; color: #7dd3fc; }
   .tag.otro { background: #2f1416; color: #fca5a5; }
@@ -110,6 +111,16 @@
     <br><b>Ocupación marcada con *</b>: pasa de 100% porque los asientos son los de una
     configuración de referencia y el avión real puede traer más. No se capa a 100 para
     no hacerla parecer exacta.
+    <br><b>% Cancel.</b> se calcula sobre las partidas ya resueltas (salieron o se
+    cancelaron), no sobre el total: contar las que todavía no despegaron haría que la
+    tasa baje sola a lo largo del día.
+    <br><b>Índice de servicio</b> = <i>completion</i> × <i>puntualidad</i>, o sea la
+    probabilidad de que un vuelo salga <b>y</b> salga dentro de los 15 minutos. Se
+    multiplican en vez de promediarse con pesos porque son dos condiciones que se tienen
+    que cumplir las dos, y así el número no depende de ponderaciones elegidas a dedo.
+    Pasá el mouse para ver sobre cuántas partidas se calculó.
+    <b>En gris</b> cuando hay menos de 30 partidas resueltas: una compañía con un vuelo
+    puntual marca 100% y no es comparable con una de cientos.
   </p>
 </div>
 
@@ -163,6 +174,26 @@ function ocup(v) {
            'un avion mas grande que el promedio de la fila.">' + num(v, 1) + '%*</span>';
   }
   return num(v, 1) + '%';
+}
+
+// Debajo de esta cantidad de partidas resueltas el indice se atenua. Una aerolinea con
+// UN vuelo puntual marca 100% y encabeza el ranking por encima de una con 400 vuelos y
+// 36%: el numero no esta mal, pero ordenar por el pone arriba a las que casi no volaron.
+// Atenuarlo es lo minimo para que no se lea como un resultado comparable; el dato sigue
+// estando, porque esconderlo seria peor.
+const BASE_MINIMA = 30;
+
+function indice(f) {
+  if (f.indice_servicio == null) return '<span class="sindato">sin dato</span>';
+  const base = f.resueltas || 0;
+  const txt = num(f.indice_servicio, 1) + '%';
+  const detalle = 'Sobre ' + base + ' partidas resueltas y ' + (f.con_hora || 0) +
+                  ' con hora medida';
+  if (base < BASE_MINIMA) {
+    return '<span class="flojo" title="' + esc(detalle + '. Base chica: no es comparable ' +
+           'con una aerolinea de cientos de vuelos.') + '">' + txt + '</span>';
+  }
+  return '<span title="' + esc(detalle) + '">' + txt + '</span>';
 }
 
 function tagProveedor(p) {
@@ -345,7 +376,8 @@ function pintar(d) {
         (s ? '<div class="s">' + esc(s) + '</div>' : '') + '</div>').join('');
 
   tabla(document.getElementById('t-aero'),
-    ['Aerolínea', 'Vuelos', 'Atraso prom.', 'Puntualidad', 'Cancel.', 'Ocupación', 'm³', 'MS YPF'],
+    ['Aerolínea', 'Vuelos', 'Atraso prom.', 'Puntualidad', 'Cancel.', '% Cancel.',
+     'Índice servicio', 'Ocupación', 'm³', 'MS YPF'],
     d.aerolineas, f => '<tr><td>' + esc(f.nombre) +
       (f.id ? ' <span class="sindato">' + esc(f.id) + '</span>' : '') + '</td>' +
       '<td>' + num(f.vuelos) + '</td>' +
@@ -353,6 +385,8 @@ function pintar(d) {
                 : num(f.atraso_prom_min, 1) + ' min') + '</td>' +
       '<td>' + pct(f.puntualidad) + '</td>' +
       '<td>' + num(f.cancelados) + '</td>' +
+      '<td>' + pct(f.cancelados_pct) + '</td>' +
+      '<td>' + indice(f) + '</td>' +
       '<td>' + ocup(f.ocupacion) + '</td>' +
       '<td>' + num(f.m3, 1) + '</td>' +
       '<td>' + (f.ms_ypf_piso == null ? '<span class="sindato">sin dato</span>'

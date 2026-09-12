@@ -1315,6 +1315,9 @@ def analisis_quien_cargo_xlsx():
         'Puntualidad (%)': f.get('puntualidad'),
         'Vuelos con hora medida': f.get('con_hora'),
         'Cancelados': f.get('cancelados'),
+        'Cancelados (%)': f.get('cancelados_pct'),
+        'Partidas resueltas': f.get('resueltas'),
+        'Indice de servicio (%)': f.get('indice_servicio'),
         'Ocupacion (%)': f['ocupacion'],
         'Vuelos con pax informado': f['vuelos_con_pax'],
         'Pasajeros': f['pax'],
@@ -1362,6 +1365,13 @@ def analisis_quien_cargo_xlsx():
                    'techo suma las que nadie declaro.'),
         'ojo_ocupacion': ('Solo sobre vuelos con pasajeros informados mayores a cero y '
                           'con tipo de avion conocido.'),
+        'ojo_cancelados': ('El % se calcula sobre las partidas RESUELTAS (salieron o se '
+                           'cancelaron), no sobre el total: las que todavia no '
+                           'despegaron no entran.'),
+        'ojo_indice': ('Indice de servicio = completion x puntualidad: la probabilidad '
+                       'de que un vuelo salga Y salga dentro de los 15 minutos. La '
+                       'puntualidad se mide solo sobre las partidas con hora real '
+                       'medida, que son menos que las resueltas.'),
         'origen': 'partidas de AA2000 sondeadas por mapa-negocio web',
     }
 
