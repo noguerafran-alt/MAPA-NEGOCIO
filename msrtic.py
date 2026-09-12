@@ -385,6 +385,8 @@ def calcular(horas=24.0, coords=None, dia=None, desde=None, hasta=None):
     flota = avion_model.get_flota()
 
     est = {'partidas': len(crudas), 'dia': dia, 'desde': desde, 'hasta': hasta,
+           # Cuantos vuelos llevaron correccion por su ocupacion real.
+           'ajustados_por_pax': 0,
            # Cuantas de las partidas del periodo ya despegaron. Coincide con
            # 'partidas' porque 'crudas' ya viene filtrada a solo confirmadas -- se
            # deja el campo para no romper a quien lo consuma, pero el numero que
@@ -472,7 +474,28 @@ def calcular(horas=24.0, coords=None, dia=None, desde=None, hasta=None):
         if codigo:
             tons, _fuente = avion_model.consumo_toneladas(codigo, dist, key)
             if tons is not None:
-                m3 = tons / DENSIDAD_T_M3
+                # CORRECCION POR OCUPACION REAL DEL VUELO. La planilla de consumo esta
+                # armada asumiendo un factor de ocupacion de referencia (LF_REFERENCIA,
+                # 0,82): un vuelo que sale con 95% pesa mas y quema mas, y uno con 40%
+                # quema menos. Hasta ahora esta cuenta ignoraba eso y le ponia a TODOS
+                # los vuelos el consumo del avion medio lleno.
+                #
+                # No es un modelo nuevo: es `ajuste_por_ocupacion()`, la misma funcion
+                # que ya corrige las proyecciones del mapa (app.py). Lo que cambia es
+                # que aca el pax es el REAL de esa partida, publicado por AA2000, y no
+                # un promedio mensual -- que es justamente lo que esta pantalla tiene y
+                # el historico no.
+                #
+                # SOLO CUANDO EL AVION ES EL REAL. Con el avion estimado, la ocupacion
+                # se calcularia contra los asientos de un tipo que elegimos nosotros:
+                # `seleccionar_avion()` ya usa el pax para elegirlo, asi que corregir
+                # ademas por ocupacion contaria el mismo dato dos veces.
+                factor = 1.0
+                if medido and pax:
+                    factor, _lf = avion_model.ajuste_por_ocupacion(codigo, pax)
+                    if factor != 1.0:
+                        est['ajustados_por_pax'] += 1
+                m3 = tons * factor / DENSIDAD_T_M3
         if m3 is None:
             est['sin_consumo'] += 1
 

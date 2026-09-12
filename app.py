@@ -1190,7 +1190,13 @@ def _filtros_analisis():
 
     Devuelve (dia, horas, desde, hasta, aerolinea, tipo, dia_por_defecto).
     """
-    aerolinea = (request.args.get('aerolinea') or '').strip().upper() or None
+    # VARIAS AEROLINEAS: llegan repetidas (?aerolinea=AR&aerolinea=WJ) o separadas por
+    # coma. Se aceptan las dos porque el <select multiple> manda la primera forma y un
+    # link pegado a mano suele traer la segunda.
+    _aero = []
+    for v in request.args.getlist('aerolinea'):
+        _aero.extend(x.strip().upper() for x in v.split(',') if x.strip())
+    aerolinea = _aero or None
     tipo = (request.args.get('tipo') or '').strip().lower() or None
     if tipo not in (None, 'cabotaje', 'internacional'):
         tipo = None
@@ -1354,7 +1360,7 @@ def analisis_quien_cargo_xlsx():
         'generado': _t.strftime('%Y-%m-%dT%H:%M:%S'),
         'dia': d.get('dia') or '',
         'desde': desde or '', 'hasta': hasta or '',
-        'aerolinea': aerolinea or 'todas',
+        'aerolinea': ', '.join(aerolinea) if aerolinea else 'todas',
         'tipo': tipo or 'cabotaje + internacional',
         'vuelos': d['vuelos'], 'm3': d['m3'], 'm3_ypf': d['m3_ypf'],
         'ms_ypf': _rango(d),
@@ -1409,7 +1415,10 @@ def analisis_quien_cargo_xlsx():
     else:
         que = d.get('dia') or 'historico'
     if aerolinea:
-        que += '-' + aerolinea
+        # Con muchas elegidas el nombre del archivo se vuelve ilegible: a partir de tres
+        # se dice cuantas en vez de enumerarlas.
+        que += '-' + ('_'.join(aerolinea) if len(aerolinea) <= 3
+                      else '%daerolineas' % len(aerolinea))
     if tipo:
         que += '-' + tipo
     resp.headers['Content-Disposition'] = (

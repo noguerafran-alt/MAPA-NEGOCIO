@@ -206,12 +206,22 @@ def proveedores_conocidos():
     return sorted(n for n in nombres if n)
 
 
+def _codigos(aerolinea):
+    """set de codigos en mayuscula desde un string, un "AR,WJ" o una lista. Vacio = todas."""
+    if not aerolinea:
+        return set()
+    if isinstance(aerolinea, str):
+        aerolinea = aerolinea.split(",")
+    return {str(a).strip().upper() for a in aerolinea if str(a).strip()}
+
+
 def analisis(dia=None, horas=24.0, aerolinea=None, tipo=None, desde=None, hasta=None):
     """Todo lo que muestra la pantalla, en una sola pasada.
 
-    `aerolinea` es el codigo (AR, LA, ...) y filtra TODO menos la lista de
-    companias, que se arma siempre completa: si el filtro la recortara, el
-    selector se quedaria con una sola opcion y no habria como volver.
+    `aerolinea` es un codigo (AR) o varios (["AR", "WJ"] o "AR,WJ") y filtra TODO
+    menos la lista de companias, que se arma siempre completa: si el filtro la
+    recortara, el selector se quedaria sin las opciones que no estan en el recorte
+    y no habria como volver ni como agregar otra.
 
     `tipo` es 'cabotaje' | 'internacional' | None (las dos).
 
@@ -229,9 +239,9 @@ def analisis(dia=None, horas=24.0, aerolinea=None, tipo=None, desde=None, hasta=
 
     if tipo in ("cabotaje", "internacional"):
         fs = [f for f in fs if f["tipo"] == tipo]
-    if aerolinea:
-        a = aerolinea.strip().upper()
-        fs = [f for f in fs if (f["aerolinea_id"] or "").upper() == a]
+    elegidas = _codigos(aerolinea)
+    if elegidas:
+        fs = [f for f in fs if (f["aerolinea_id"] or "").upper() in elegidas]
 
     total, por_aero, por_ruta = _nuevo(), {}, {}
     for f in fs:
@@ -295,8 +305,8 @@ def analisis(dia=None, horas=24.0, aerolinea=None, tipo=None, desde=None, hasta=
         rutas=rutas,
         companias=sorted(todas.values(), key=lambda x: x["nombre"] or ""),
         proveedores=proveedores_conocidos(),
-        filtro={"dia": dia, "horas": horas, "aerolinea": aerolinea, "tipo": tipo,
-                "desde": desde, "hasta": hasta},
+        filtro={"dia": dia, "horas": horas, "aerolinea": sorted(elegidas) or None,
+                "tipo": tipo, "desde": desde, "hasta": hasta},
         estado=est,
         generado=time.time(),
     )
@@ -345,6 +355,12 @@ def _self_check():
         # Un tipo desconocido no entra al promedio en vez de contar como cero asientos.
         dos = _asientos({"aviones_n": {a: 1, "ZZZZ": 5}})
         assert abs(dos - sa) < 1e-6, dos
+
+    # Varias aerolineas a la vez, en cualquiera de las tres formas de pasarlas.
+    assert _codigos(None) == set()
+    assert _codigos("ar") == {"AR"}
+    assert _codigos("AR,WJ") == {"AR", "WJ"}
+    assert _codigos([" ar ", "wj", ""]) == {"AR", "WJ"}
 
     # Cancelaciones e indice de servicio.
     q = _puntualidad([

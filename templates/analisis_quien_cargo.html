@@ -29,6 +29,8 @@
 
   .filtros { display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
              margin-bottom: 6px; }
+  select[multiple] { min-width: 230px; padding: 4px 6px; }
+  select[multiple] option { padding: 2px 4px; }
   select, input[type=date] { background: #11141a; color: #e6e6e6; border: 1px solid #2b313b;
            border-radius: 6px; padding: 7px 10px; font-size: .9rem; font-family: inherit; }
   input[type=date]::-webkit-calendar-picker-indicator { filter: invert(.7); cursor: pointer; }
@@ -87,7 +89,11 @@
   <label>hasta <input type="date" id="f-hasta"></label>
   <button class="boton" id="b-limpiar" type="button" hidden>Quitar rango</button>
   <div class="sep"></div>
-  <label>Aerolínea <select id="f-aerolinea"><option value="">Todas</option></select></label>
+  {# `multiple` nativo: ctrl/cmd+click para varias, sin libreria. La opcion "Todas"
+     se va -- en un multiple, "ninguna elegida" YA significa todas, y dejarla seria una
+     opcion que contradice a las otras si se seleccionan juntas. #}
+  <label>Aerolínea <select id="f-aerolinea" multiple size="4"></select></label>
+  <button class="boton" id="b-todas" type="button" hidden>Todas</button>
   <label>Tipo <select id="f-tipo">
     <option value="">Cabotaje + internacional</option>
     <option value="cabotaje">Solo cabotaje</option>
@@ -244,7 +250,8 @@ async function guardarProveedor(el) {
     // proveedor declara una EXCEPCION para esa compania y no reescribe la ruta para
     // todas. Es lo que el usuario esta mirando; hacer lo otro cambiaria vuelos que no
     // tiene en pantalla.
-    const aerolinea = document.getElementById('f-aerolinea').value || null;
+    const elegidas = [...document.getElementById('f-aerolinea').selectedOptions];
+    const aerolinea = elegidas.length === 1 ? elegidas[0].value : null;
     const r = await fetch('/api/quien-cargo/proveedor', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -392,7 +399,11 @@ function pintar(d) {
       '<td>' + (f.ms_ypf_piso == null ? '<span class="sindato">sin dato</span>'
                 : num(f.ms_ypf_piso, 1) + '–' + num(f.ms_ypf_techo, 1) + '%') + '</td></tr>');
 
-  const aeroFiltrada = document.getElementById('f-aerolinea').value;
+  // La excepcion de la planilla es por UNA compania. Con varias elegidas no hay a cual
+  // atribuir el cambio, asi que el selector vuelve a editar la ruta entera y el
+  // encabezado lo dice.
+  const sels = [...document.getElementById('f-aerolinea').selectedOptions];
+  const aeroFiltrada = sels.length === 1 ? sels[0].value : '';
   tabla(document.getElementById('t-rutas'),
     ['Ruta', 'Tipo', aeroFiltrada ? 'Abastece (excepción ' + esc(aeroFiltrada) + ')'
                                   : 'Abastece', 'Vuelos', 'Km', 'Aviones', 'm³'],
@@ -444,7 +455,7 @@ function filtros() {
   const desde = document.getElementById('f-desde').value;
   const hasta = document.getElementById('f-hasta').value;
   const dia = document.getElementById('f-dia').value;
-  const aero = document.getElementById('f-aerolinea').value;
+  const aero = [...document.getElementById('f-aerolinea').selectedOptions].map(o => o.value);
   const tipo = document.getElementById('f-tipo').value;
   // EL RANGO MANDA sobre el dia, igual que en el backend: son dos formas de cortar lo
   // mismo y mandar las dos daria un recorte que nadie pidio.
@@ -454,7 +465,7 @@ function filtros() {
   } else if (dia) {
     p.set('dia', dia);
   }
-  if (aero) p.set('aerolinea', aero);
+  aero.forEach(a => p.append('aerolinea', a));
   if (tipo) p.set('tipo', tipo);
   return p;
 }
@@ -471,7 +482,8 @@ function cargar() {
   document.getElementById('b-limpiar').hidden = !hayRango;
   document.getElementById('b-excel').href = '/analisis-quien-cargo.xlsx?' + p.toString();
   const dia = p.get('dia') || '';
-  const aero = p.get('aerolinea') || '';
+  const aero = p.getAll('aerolinea');
+  document.getElementById('b-todas').hidden = !aero.length;
   fetch('/api/analisis-quien-cargo?' + p.toString())
     .then(r => r.json())
     .then(d => {
@@ -481,8 +493,11 @@ function cargar() {
           (d.dias || []).map(x => ({v: x.dia, t: x.dia + ' (' + x.despegadas + ')'}))),
         dia || d.dia);
       PROVEEDORES = (d.proveedores && d.proveedores.length) ? d.proveedores : ['YPF'];
-      opciones(document.getElementById('f-aerolinea'),
-        (d.companias || []).map(c => ({v: c.id, t: c.nombre})), aero);
+      const sel = document.getElementById('f-aerolinea');
+      const elegidas = new Set(aero);
+      sel.innerHTML = (d.companias || []).map(c =>
+        '<option value="' + esc(c.id) + '"' + (elegidas.has(c.id) ? ' selected' : '') +
+        '>' + esc(c.nombre) + '</option>').join('');
       pintar(d);
     })
     .catch(e => {
@@ -495,6 +510,10 @@ function cargar() {
 
 ['f-dia', 'f-desde', 'f-hasta', 'f-aerolinea', 'f-tipo'].forEach(
   id => document.getElementById(id).addEventListener('change', cargar));
+document.getElementById('b-todas').addEventListener('click', () => {
+  [...document.getElementById('f-aerolinea').options].forEach(o => { o.selected = false; });
+  cargar();
+});
 document.getElementById('b-limpiar').addEventListener('click', () => {
   document.getElementById('f-desde').value = '';
   document.getElementById('f-hasta').value = '';
