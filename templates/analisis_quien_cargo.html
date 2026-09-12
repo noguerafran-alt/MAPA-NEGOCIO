@@ -135,9 +135,10 @@ function tagProveedor(p) {
   return '<span class="tag otro">' + esc(p) + '</span>';
 }
 
-// Los proveedores que se pueden elegir salen de los que aparecen EN LOS DATOS, no de
-// una lista fija en el codigo: si manana entra una petrolera nueva a la planilla,
-// aparece sola en el selector. 'YPF' va siempre aunque el dia no tenga ninguna.
+// Los proveedores elegibles los manda el backend leyendo LA PLANILLA, no los datos
+// filtrados: con una aerolinea puesta, el recorte no tiene todas las petroleras y el
+// selector se quedaba sin la opcion buscada (elegirla la dejaba en vacio, que aca
+// significa BORRAR la declaracion).
 let PROVEEDORES = ['YPF'];
 
 function selectProveedor(f) {
@@ -155,12 +156,16 @@ function selectProveedor(f) {
   }
   const act = (f.proveedor === 'sin_declarar' ? '' : f.proveedor) || '';
   const vistos = new Set(PROVEEDORES);
+  // El valor actual entra siempre aunque la planilla ya no lo liste: un <select> que no
+  // ofrece su propio valor se muestra vacio, y vacio aca significa borrar.
   if (act) vistos.add(act);
   const opts = ['<option value="">sin declarar</option>'].concat(
     [...vistos].sort().map(p =>
       '<option value="' + esc(p) + '"' + (p === act ? ' selected' : '') + '>' +
       esc(p) + '</option>')).join('');
-  return '<select class="prov" data-ruta="' + esc(f.origin + '-' + f.dest) + '" ' +
+  // POR IATA: la planilla se indexa por codigo ('EZE-MAD'). Con el nombre
+  // ('Ezeiza-Madrid') el backend rechaza el pedido por "los IATA son de 3 letras".
+  return '<select class="prov" data-ruta="' + esc(f.cod_o + '-' + f.cod_d) + '" ' +
          'data-antes="' + esc(act) + '">' + opts + '</select>';
 }
 
@@ -315,8 +320,7 @@ function cargar() {
         [{v: 'todo', t: 'Todo el histórico'}].concat(
           (d.dias || []).map(x => ({v: x.dia, t: x.dia + ' (' + x.despegadas + ')'}))),
         dia || d.dia);
-      PROVEEDORES = [...new Set(['YPF'].concat(
-        Object.keys(d.m3_por_proveedor || {}).filter(p => p !== 'sin_declarar')))];
+      PROVEEDORES = (d.proveedores && d.proveedores.length) ? d.proveedores : ['YPF'];
       opciones(document.getElementById('f-aerolinea'),
         (d.companias || []).map(c => ({v: c.id, t: c.nombre})), aero);
       pintar(d);

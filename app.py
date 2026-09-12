@@ -1760,6 +1760,20 @@ def api_quien_cargo_proveedor():
     actual.setdefault('rutas', {})
     actual.setdefault('por_aerolinea', {})
 
+    # EL NOMBRE DEL PROVEEDOR SE GUARDA CON EL CASE QUE YA USA LA PLANILLA. Las
+    # pantallas muestran la bandera en mayuscula ('AXION') y sus selectores ofrecen ese
+    # texto; guardarlo tal cual metria 'AXION' al lado de los 'Axion' que ya estan, y la
+    # misma petrolera pasaria a existir dos veces en el mismo archivo. No hay lista fija
+    # de nombres: el canonico es el que la planilla ya tenga.
+    if proveedor:
+        conocidos = set(actual['rutas'].values())
+        for _v in actual['por_aerolinea'].values():
+            conocidos.update(_v.values())
+        for _c in conocidos:
+            if _c.upper() == proveedor.upper():
+                proveedor = _c
+                break
+
     if aerolinea:
         porc = actual['por_aerolinea'].setdefault(ruta, {})
         if proveedor:

@@ -135,6 +135,29 @@ def _cerrar(d):
     }
 
 
+def proveedores_conocidos():
+    """Los nombres de petrolera que la planilla ya usa, con su case tal cual.
+
+    SALEN DE LA PLANILLA Y NO DE LOS DATOS DEL FILTRO. Derivarlos de las filas que se
+    estan mostrando parece equivalente y no lo es: con una aerolinea filtrada, el
+    recorte solo tiene las petroleras de SUS rutas -- Lufthansa vuela solo rutas de YPF
+    -- y el selector se quedaba sin la opcion que se queria elegir. Peor todavia,
+    elegirla dejaba el <select> en vacio y eso EN ESTA PANTALLA significa "borrar la
+    declaracion": el usuario pedia Raizen y borraba.
+    """
+    try:
+        import json
+        with open(msrtic.tabla_proveedores(), encoding='utf-8-sig') as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return ['YPF']
+    nombres = set((d.get('rutas') or {}).values())
+    for v in (d.get('por_aerolinea') or {}).values():
+        nombres.update(v.values())
+    nombres.add('YPF')
+    return sorted(n for n in nombres if n)
+
+
 def analisis(dia=None, horas=24.0, aerolinea=None, tipo=None, desde=None, hasta=None):
     """Todo lo que muestra la pantalla, en una sola pasada.
 
@@ -209,6 +232,7 @@ def analisis(dia=None, horas=24.0, aerolinea=None, tipo=None, desde=None, hasta=
         aerolineas=aerolineas,
         rutas=rutas,
         companias=sorted(todas.values(), key=lambda x: x["nombre"] or ""),
+        proveedores=proveedores_conocidos(),
         filtro={"dia": dia, "horas": horas, "aerolinea": aerolinea, "tipo": tipo},
         estado=est,
         generado=time.time(),
