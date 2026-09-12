@@ -517,127 +517,104 @@ ESTADOS_YA_SALIO = ('en horario', 'cerrado')
 
 
 def en_el_aire(ahora=None, horas=36.0):
-    """Los vuelos que, segun la hora de despegue MEDIDA, todavia estarian volando.
+    """Los vuelos que estarian volando ahora, con lo que arma "Quien le cargo".
+
+    LA FUENTE ES `quien_cargo.tablero()`, no la base cruda. Es el mismo modulo que
+    procesa el feed de AA2000 sin parar, y el que ya resolvio las dos cosas dificiles:
+    en que SITUACION esta cada partida (despego / sin_dato / no_salio / programada) y
+    QUE PETROLERA la abastece. Volver a derivar eso aca seria una segunda
+    implementacion de las mismas reglas, y este repo ya sabe como termina: dos numeros
+    distintos y nadie sabiendo cual creer. Ademas trae gratis el proveedor al tooltip.
 
     ESTO NO ES SEGUIMIENTO: es navegacion a estima. FlightRadar dibuja donde el avion
-    DICE que esta, por ADS-B; esto dibuja donde deberia estar segun cuando salio y a que
-    velocidad vuela su tipo. Un avioncito sobre un mapa es la afirmacion mas literal que
-    existe de "esta aca", asi que cada vuelo viaja con lo que hace falta para que la
-    pantalla lo diga: `estimado: True` y de donde sale cada pieza.
+    DICE que esta, por ADS-B; esto dibuja donde deberia estar segun cuando salio y a
+    que velocidad vuela su tipo.
 
-    DOS FUENTES PARA LA HORA DE SALIDA, y la de abajo existe porque la de arriba sola
-    dejaba el cielo sin cabotaje.
+    DOS FUENTES PARA LA HORA DE SALIDA, y la segunda existe porque la primera sola
+    dejaba el cielo sin cabotaje. AA2000 publica la hora REAL con horas de retraso:
+    medido el 2026-09-12 con el poller vivo, de 50 partidas programadas en las ultimas
+    3 horas ninguna tenia hora real. Para un cabotaje eso es fatal -- cuando su hora se
+    publica, ya aterrizo. Entonces tambien entran las `sin_dato` (hora programada
+    pasada, sin hora real) cuyo estado no diga que siguen en tierra, y cada vuelo lleva
+    `hora_base` para que la pantalla diga cual uso.
 
-    Al principio esto pedia hora MEDIDA (`estado_partida() == 'despego'`), con el
-    argumento de que la programada puede estar demorada. El argumento sigue en pie pero
-    la conclusion estaba mal, y se vio mirando el feed: **AA2000 publica la hora real con
-    horas de retraso**. Medido el 2026-09-12 sobre la base del poller, que estaba vivo
-    (habia sondeado 6 minutos antes): de las 50 partidas programadas en las ultimas 3
-    horas, CERO tenian hora real, y en 6 horas no hubo ni una que dijera "Despegado" sin
-    su hora -- el estado y la hora aparecen juntos, tarde.
-
-    Para un vuelo de cabotaje eso es fatal: cuando su hora real se publica, ya aterrizo.
-    Por eso el mapa mostraba solo vuelos de larga distancia y parecia que el cabotaje
-    estaba filtrado. No estaba: llegaba tarde.
-
-    Entonces tambien entran las `sin_dato` -- las que su hora programada ya paso y nadie
-    capturo la real -- PERO solo si el estado no dice que siguen en tierra. Esa lista es
-    blanca y no negra: "En Horario" y "Cerrado" significan que salio, mientras que
-    "Embarcando", "Pre Embarque", "Ultimo aviso" y "Demorado" dicen que el avion todavia
-    esta ahi. Cada vuelo lleva `hora_base` ('medida' o 'programada') para que la pantalla
-    pueda decir cual de las dos esta usando.
-
-    La posicion NO se calcula aca. Se mandan las dos puntas y los dos instantes, y el
-    navegador interpola con su reloj: asi el avion se mueve solo, con UN pedido cada
-    tanto en vez de uno por cuadro. En Render, que corre con un solo worker, esa
-    diferencia es la que decide si esto se puede tener prendido.
+    La posicion NO se calcula aca: se mandan las dos puntas y los dos instantes, y el
+    navegador interpola con su reloj. Asi los aviones se mueven con UN pedido cada
+    tanto en vez de uno por cuadro.
     """
     import time as _t
-    try:
-        import quien_cargo as _qc
-        estado_de = _qc.estado_partida
-    except Exception:                                    # noqa: BLE001
-        # Sin el modulo se cae a lo unico que se puede afirmar solo: que hay hora medida.
-        estado_de = lambda p: 'despego' if p.get('real_epoch') else 'otro'   # noqa: E731
-
     ahora = float(ahora if ahora is not None else _t.time())
+
+    qc = _cargar_quien_cargo()
+    if qc is None:
+        return {'vuelos': [], 'estado': {'motivo': 'quien_cargo no disponible'},
+                'ahora_epoch': ahora, 'margen_puntas_min': round(MARGEN_PUNTAS_H * 60)}
+    prov = _cargar_proveedores()
+    tabla = prov.cargar_tabla(tabla_proveedores()) if prov else None
+    datos = qc.tablero(base_oficial(), horas, None, tabla)
+    partidas = (datos or {}).get('vuelos') or []
+
     iata = _cargar_iata()
     coords = _coords()
-    crudas = _partidas(horas)
-
-    mats = {_norm_matricula(p.get('matricula')) for p in crudas}
+    mats = {_norm_matricula(p.get('matricula')) for p in partidas}
     mats.discard('')
     tipos = _tipos_por_matricula(mats)
     flota = avion_model.get_flota()
 
-    est = {'partidas': len(crudas), 'despegadas': 0, 'en_el_aire': 0,
-           'por_hora_programada': 0,
-           'sin_hora_medida': 0, 'sin_ruta': 0, 'aterrizados': 0,
-           'avion_medido': 0, 'avion_desconocido': 0, 'con_pax': 0,
-           'iata_desconocidos': {}}
+    est = {'partidas': len(partidas), 'despegadas': 0, 'en_el_aire': 0,
+           'por_hora_programada': 0, 'sin_hora_medida': 0, 'sin_ruta': 0,
+           'aterrizados': 0, 'avion_medido': 0, 'avion_desconocido': 0,
+           'con_pax': 0, 'iata_desconocidos': {}}
     vuelos = []
 
-    for p in crudas:
-        situacion = estado_de(p)
+    for p in partidas:
         etiqueta = (p.get('estado') or '').strip().lower()
         salida, hora_base = None, None
-        if situacion == 'despego' and p.get('real_epoch'):
+        if p.get('situacion') == 'despego' and p.get('real_epoch'):
             salida, hora_base = p['real_epoch'], 'medida'
-        elif situacion == 'sin_dato' and etiqueta in ESTADOS_YA_SALIO:
-            # Su hora programada ya paso y el estado no la contradice: salio, lo que
-            # falta es que AA2000 publique la hora.
+        elif p.get('situacion') == 'sin_dato' and etiqueta in ESTADOS_YA_SALIO:
             salida, hora_base = p.get('programada_epoch'), 'programada'
         if not salida:
             est['sin_hora_medida'] += 1
             continue
         est['despegadas'] += 1
-        est['por_hora_programada'] += 1 if hora_base == 'programada' else 0
+        if hora_base == 'programada':
+            est['por_hora_programada'] += 1
 
-        cod_o = (p.get('aeropuerto') or '').strip().upper()
-        cod_d = (p.get('otro_aeropuerto') or '').strip().upper()
+        cod_o = (p.get('origen') or '').strip().upper()
+        cod_d = (p.get('destino') or '').strip().upper()
         origen, destino = iata.get(cod_o), iata.get(cod_d)
         if not origen or not destino:
-            # Misma regla que el resto del modulo: un IATA que no esta no se adivina.
             est['sin_ruta'] += 1
             for cod in (cod_o, cod_d):
                 if cod and cod not in iata:
                     est['iata_desconocidos'][cod] = est['iata_desconocidos'].get(cod, 0) + 1
             continue
         o_nombre, d_nombre = origen[0], destino[0]
-        if o_nombre == d_nombre:
-            est['sin_ruta'] += 1
-            continue
         c_o, c_d = coords.get(o_nombre), coords.get(d_nombre)
-        if not c_o or not c_d:
+        if o_nombre == d_nombre or not c_o or not c_d:
             est['sin_ruta'] += 1
             continue
         dist = avion_model.haversine(c_o[0], c_o[1], c_d[0], c_d[1])
 
-        # EL AVION, y de donde sale. Por matricula es un dato; sin matricula queda la
-        # velocidad generica, y eso cambia cuanto tarda -- asi que se marca.
         codigo = tipos.get(_norm_matricula(p.get('matricula')))
         ficha = flota.get(codigo) if codigo else None
-        if ficha:
-            est['avion_medido'] += 1
-        else:
-            est['avion_desconocido'] += 1
+        est['avion_medido' if ficha else 'avion_desconocido'] += 1
         vel = (ficha or {}).get('velocidad_crucero_kmh') or 830.0
-        duracion = (MARGEN_PUNTAS_H + dist / float(vel)) * 3600.0
-        llegada = salida + duracion
+        llegada = salida + (MARGEN_PUNTAS_H + dist / float(vel)) * 3600.0
         if ahora >= llegada:
             est['aterrizados'] += 1
             continue
         if ahora < salida:
-            continue                    # despego "en el futuro": reloj o dato raro
+            continue
 
         pax = p.get('pasajeros')
         try:
             pax = int(pax) if pax not in (None, '') else None
         except (TypeError, ValueError):
             pax = None
-        # Un 0 de este feed es "no informado", no cero pasajeros. Ya costo una vez.
         if not pax:
-            pax = None
+            pax = None          # un 0 de este feed es "no informado"
         else:
             est['con_pax'] += 1
 
@@ -650,26 +627,27 @@ def en_el_aire(ahora=None, horas=36.0):
             'olat': c_o[0], 'olon': c_o[1], 'dlat': c_d[0], 'dlon': c_d[1],
             'distancia_km': round(dist, 1),
             'salida_epoch': salida, 'llegada_epoch': llegada,
-            # 'medida' o 'programada': la pantalla lo dice, porque una hora programada
-            # puede estar corrida y eso mueve el avion.
             'hora_base': hora_base, 'estado': p.get('estado'),
             'velocidad_kmh': round(float(vel)),
             'pax': pax,
+            'proveedor': p.get('proveedor'), 'motivo': p.get('motivo'),
         })
 
-    # DE CUANDO ES EL DATO. Sin esto, un cielo sin cabotaje se lee como un bug del
-    # filtro, y es otra cosa: los vuelos de cabotaje duran 1 o 2 horas, asi que con la
-    # base atrasada 3 horas ya aterrizaron todos y solo quedan los de larga distancia.
-    # Medido: con el dato al dia hay 47 en vuelo, 34 de ellos de cabotaje; con 3,2 horas
-    # de atraso quedan 4, todos internacionales.
-    est['ultima_partida_epoch'] = max((p.get('real_epoch') or 0 for p in crudas),
-                                      default=0) or None
+    est['ultima_partida_epoch'] = max(
+        (p.get('real_epoch') or 0 for p in partidas), default=0) or None
     est['en_el_aire'] = len(vuelos)
-    # El mas lejos de llegar primero: con muchos encimados, el orden decide cual queda
-    # arriba, y conviene que sea el que mas tiempo va a seguir ahi.
     vuelos.sort(key=lambda v: -v['llegada_epoch'])
     return {'vuelos': vuelos, 'estado': est, 'ahora_epoch': ahora,
             'margen_puntas_min': round(MARGEN_PUNTAS_H * 60)}
+
+
+def _cargar_quien_cargo():
+    """El modulo que procesa el feed. Guardado: sin el, la capa no se ofrece."""
+    try:
+        import quien_cargo
+        return quien_cargo
+    except Exception:                                    # noqa: BLE001
+        return None
 
 
 def _clave_de_archivo():

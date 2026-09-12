@@ -2339,6 +2339,12 @@ let avionesDatos = [];
 let avionesPidiendo = false;
 let avionesMotivo = '';
 let avionesUltimaPartida = 0;   // para poder decir si el dato quedó viejo
+// MIENTRAS EL USUARIO ARRASTRA EL MAPA NO SE TOCA NADA. Cada restyle rehace el SVG y
+// reescribe los transform de los <text>, asi que un tick en medio de un arrastre le
+// cambia la rotacion a los aviones y le pelea el gesto al mouse: el mapa se mueve a
+// tirones y los aviones apuntan para cualquier lado. Plotly avisa con `plotly_relayouting`
+// mientras dura el gesto y con `plotly_relayout` cuando termina.
+let avionesArrastrando = false;
 
 function toggleAviones() {
   avionesActivo = !avionesActivo;
@@ -2424,6 +2430,13 @@ function avionesTexto(a) {
   if (!v.avion_medido) s += '<br><i>velocidad genérica: sin matrícula en el registro</i>';
   // Un 0 de este feed es "no informado". Sólo 17% de las partidas traen pasajeros.
   s += '<br>Pasajeros: ' + (v.pax ? v.pax : '<i>no informados</i>');
+  // QUIEN LE CARGA EL COMBUSTIBLE, que es lo que aporta el modulo del que salen estos
+  // datos. Con su motivo al lado: 'planilla' es evidencia directa e 'interior' es
+  // estructura del mercado, y son dos niveles de evidencia distintos.
+  if (v.proveedor) {
+    s += '<br>Abastece: <b>' + esc(v.proveedor) + '</b>'
+       + (v.motivo ? ' <i>(' + esc(v.motivo) + ')</i>' : '');
+  }
   // DE DONDE SALE LA HORA DE DESPEGUE, porque cambia cuanto vale la posicion. AA2000
   // publica la hora real con horas de retraso, asi que casi todo lo que esta volando
   // ahora entra por su hora PROGRAMADA: el avion salio -- su estado lo dice -- pero si
@@ -2542,7 +2555,7 @@ function avionesIdx(gd) {
 }
 
 function moverAviones() {
-  if (!avionesActivo) return;
+  if (!avionesActivo || avionesArrastrando) return;
   const gd = document.getElementById('map');
   if (!gd || !gd.data) return;
   const idx = avionesIdx(gd);
@@ -2847,6 +2860,15 @@ function render(skipListRebuild) {
       // Cada react reescribe los transform de los <text>: sin esto los aviones vuelven
       // a apuntar todos al este hasta el proximo tick.
       rotarAviones();
+      if (!gd._avionesHandlers) {
+        gd._avionesHandlers = true;
+        // Durante el gesto: no se redibuja nada, pero SI se vuelve a rotar, porque el
+        // paneo reescribe los transform y los aviones quedarian apuntando al este.
+        gd.on('plotly_relayouting', () => { avionesArrastrando = true; rotarAviones(); });
+        gd.on('plotly_relayout', () => { avionesArrastrando = false; rotarAviones(); });
+        // Y despues de CUALQUIER redibujado, venga de donde venga.
+        gd.on('plotly_afterplot', rotarAviones);
+      }
       if (!gd._clickHandlerAttached) {
         gd._clickHandlerAttached = true;
         gd.on('plotly_click', (evt) => {
