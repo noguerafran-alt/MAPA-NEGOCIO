@@ -2463,46 +2463,85 @@ function empujarAviones(traces) {
   if (!avionesActivo) return;
   const a = avionesAhora();
   avionesCartel(a.length);
-  traces.push({
+  traces.push(avionesTrace(a));
+  avionesRumbos = a.map(x => x.rumbo);
+}
+
+// EL AVION ES UN GLIFO DE TEXTO, no un marcador, y esa rareza tiene motivo. Plotly no
+// trae ningun simbolo con forma de avion -- se revisaron los 324 de la version 2.32 y lo
+// mas cercano, `arrow-wide`, se lee como una flecha. El caracter U+2708 SI dibuja la
+// silueta, igual que la de FlightRadar.
+//
+// El precio: `scattergeo` NO soporta `textangle` (comprobado contra el schema: devuelve
+// false), asi que el glifo sale siempre apuntando al ESTE. La rotacion se aplica despues
+// sobre el SVG, en rotarAviones().
+const AVION_GLIFO = String.fromCharCode(9992);
+let avionesRumbos = [];
+
+function avionesTrace(a) {
+  return {
     type: 'scattergeo',
-    mode: 'markers',
+    mode: 'text',
     name: 'aviones-en-vuelo',
     lat: a.map(x => x.lat),
     lon: a.map(x => x.lon),
-    marker: {
-      size: 11,
-      // Lo mas parecido a un avion que tiene Plotly. Se compararon los 324
-      // simbolos de la 2.32: triangle-up se lee como un triangulo y arrow-wide
-      // como una flecha en punta, que con el rumbo aplicado pasa por avion.
-      symbol: 'arrow-wide',
-      angle: a.map(x => x.rumbo),
-      angleref: 'up',
-      color: '#ffd98a',
-      line: {width: 1, color: '#2a2f45'},
-    },
+    text: a.map(() => AVION_GLIFO),
+    textfont: {size: 17, color: '#ffd98a'},
+    // El tooltip va en hovertext y no en text: text es lo que se DIBUJA (el glifo).
+    hovertext: a.map(avionesTexto),
     hoverinfo: 'text',
-    text: a.map(avionesTexto),
     showlegend: false,
+  };
+}
+
+// ROTAR LOS GLIFOS A MANO, sobre el SVG que ya dibujo Plotly. Cada <text> viene con un
+// `translate(x,y)` propio, asi que la rotacion se AGREGA al transform en vez de
+// reemplazarlo -- pisarlo manda todos los aviones a la esquina.
+//
+// Hay que reaplicarla despues de CADA redibujado: Plotly reescribe el transform y se
+// lleva puesta la rotacion. Comprobado: tras un restyle el atributo vuelve a quedar solo
+// con el translate. Por eso se llama al final del tick y del render.
+function rotarAviones() {
+  if (!avionesActivo || !avionesRumbos.length) return;
+  const gd = document.getElementById('map');
+  if (!gd) return;
+  const grupos = gd.querySelectorAll('.geolayer .scatterlayer > g.trace');
+  const g = grupos[avionesIdx(gd)];
+  if (!g) return;
+  const nodos = g.querySelectorAll('text');
+  // Si los conteos no coinciden, Plotly todavia no redibujo: mejor no rotar nada que
+  // rotar el avion equivocado.
+  if (nodos.length !== avionesRumbos.length) return;
+  nodos.forEach((el, i) => {
+    const base = (el.getAttribute('transform') || '').split(' rotate(')[0];
+    // El glifo apunta al ESTE, asi que al rumbo se le descuentan 90 grados.
+    el.setAttribute('transform', base + ' rotate(' + (avionesRumbos[i] - 90) + ')');
   });
+}
+
+function avionesIdx(gd) {
+  if (!gd || !gd.data) return -1;
+  for (let i = 0; i < gd.data.length; i++) {
+    if (gd.data[i].name === 'aviones-en-vuelo') return i;
+  }
+  return -1;
 }
 
 function moverAviones() {
   if (!avionesActivo) return;
   const gd = document.getElementById('map');
   if (!gd || !gd.data) return;
-  let idx = -1;
-  for (let i = 0; i < gd.data.length; i++) {
-    if (gd.data[i].name === 'aviones-en-vuelo') { idx = i; break; }
-  }
+  const idx = avionesIdx(gd);
   if (idx < 0) return;            // todavía no se dibujó: lo hará el próximo render()
   const a = avionesAhora();
   avionesCartel(a.length);
+  avionesRumbos = a.map(x => x.rumbo);
   Plotly.restyle('map', {
     lat: [a.map(x => x.lat)],
     lon: [a.map(x => x.lon)],
-    text: [a.map(avionesTexto)],
-    'marker.angle': [a.map(x => x.rumbo)],
-  }, [idx]);
+    hovertext: [a.map(avionesTexto)],
+    text: [a.map(() => AVION_GLIFO)],
+  }, [idx]).then(rotarAviones);
 }
 
 setInterval(moverAviones, AVIONES_TICK_MS);
@@ -2791,6 +2830,9 @@ function render(skipListRebuild) {
 
   Plotly.react('map', traces, layout, { responsive: true, displaylogo: false, displayModeBar: true, doubleClick: false })
     .then(gd => {
+      // Cada react reescribe los transform de los <text>: sin esto los aviones vuelven
+      // a apuntar todos al este hasta el proximo tick.
+      rotarAviones();
       if (!gd._clickHandlerAttached) {
         gd._clickHandlerAttached = true;
         gd.on('plotly_click', (evt) => {
