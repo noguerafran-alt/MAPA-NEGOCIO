@@ -96,8 +96,10 @@ DENSIDAD_T_M3 = 0.8
 # bases viven en el DISCO PERSISTENTE (/var/data), no en el repo:
 #
 #   - aa2000_oficial.db  la escribe el poller de este mismo proceso (ver sondeo.py).
-#   - aircraft_db.sqlite pesa 52 MB y se construye una vez desde OpenSky. Un repo que
-#                        despliega no puede cargar 52 MB de blob, y el disco ya existe.
+#   - aircraft_db.sqlite pesa 52 MB y se construye una vez desde OpenSky. El volcado
+#                        COMPLETO sigue viviendo solo en el disco: son 52 MB y 9
+#                        columnas. Lo que si viaja en el repo es la semilla recortada
+#                        de datos/ (dos columnas, ~16 MB) -- ver base_aviones().
 #
 # Que esten en el disco y no en el repo es lo que hace que el acumulado sobreviva a los
 # deploys: el filesystem de Render es efimero salvo el disco montado.
@@ -114,12 +116,18 @@ SEMILLA_AVIONES = os.path.join(BASE, 'datos', 'aircraft_db.sqlite')
 def base_aviones():
     """El registro de matriculas: disco > semilla del repo > nada.
 
-    EL DEL DISCO GANA cuando esta, porque es el volcado completo (609.357 filas,
-    incluye matriculas extranjeras) que alguien subio a mano a /var/data. La
-    semilla de datos/ solo tiene matriculas argentinas (LV/LQ) con typecode, para
-    que un deploy nuevo -- sin nada todavia en el disco persistente -- no caiga en
-    silencio a "avion no identificado" en el 100% de los vuelos. Se regenera con
-    datos/actualizar_registro_aviones.py.
+    EL DEL DISCO GANA cuando esta, porque es el volcado completo (609.357 filas) que
+    alguien subio a mano a /var/data. La semilla de datos/ trae hoy las 504.757
+    matriculas con typecode del mismo volcado (alcance 'todo', ~16 MB), para que un
+    deploy nuevo -- sin nada todavia en el disco persistente -- resuelva tambien los
+    extranjeros en vez de caer a "avion no identificado". La diferencia con el disco
+    son las filas SIN typecode, que el lookup de aca abajo descarta igual.
+
+    ESOS 16 MB VIAJAN EN CADA CLONE Y CADA DEPLOY. Es una decision tomada a
+    proposito (2026-09-12), no un descuido: se prefirio cobertura completa desde el
+    primer arranque antes que un repo liviano. Si algun dia pesa de mas, volver a la
+    semilla chica es correr el script con alcance 'ar' (~1.700 filas, 68 KB).
+    Se regenera con datos/actualizar_registro_aviones.py.
     """
     del_entorno = os.environ.get('MS_RTIC_AVIONES')
     if del_entorno:
